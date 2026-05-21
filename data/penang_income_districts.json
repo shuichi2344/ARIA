@@ -1,0 +1,160 @@
+{
+  "source": "Household Gross Income based on district in Penang 2024 - DOSM",
+  "year": 2024,
+  "state": "Pulau Pinang",
+  "income_groups": {
+    "B40": {
+      "range": "RM0 - 5999",
+      "min_income_rm": 0,
+      "max_income_rm": 5999,
+      "description": "Bottom 40% income group"
+    },
+    "M40": {
+      "range": "RM6000 - 12999",
+      "min_income_rm": 6000,
+      "max_income_rm": 12999,
+      "description": "Middle 40% income group"
+    },
+    "T20": {
+      "range": "RM13000 and above",
+      "min_income_rm": 13000,
+      "max_income_rm": null,
+      "description": "Top 20% income group"
+    }
+  },
+  "districts": {
+    "Seberang Perai Tengah": {
+      "income_distribution": {
+        "B40": {"percentage": 39.9},
+        "M40": {"percentage": 44.5},
+        "T20": {"percentage": 15.5}
+      },
+      "household_distribution_by_income_class": {
+        "1999_and_below": 2.9,
+        "2000_2999": 6.4,
+        "3000_3999": 11.6,
+        "4000_4999": 8.4,
+        "5000_5999": 10.6,
+        "6000_6999": 11.2,
+        "7000_7999": 8.0,
+        "8000_8999": 6.8,
+        "9000_9999": 7.2,
+        "10000_10999": 4.3,
+        "11000_11999": 3.9,
+        "12000_12999": 3.1,
+        "13000_13999": 3.5,
+        "14000_14999": 1.1,
+        "15000_and_above": 10.9
+      }
+    },
+    "Seberang Perai Utara": {
+      "income_distribution": {
+        "B40": {"percentage": 42.3},
+        "M40": {"percentage": 42.8},
+        "T20": {"percentage": 15.0}
+      },
+      "household_distribution_by_income_class": {
+        "1999_and_below": 4.4,
+        "2000_2999": 6.2,
+        "3000_3999": 10.7,
+        "4000_4999": 12.0,
+        "5000_5999": 9.0,
+        "6000_6999": 10.5,
+        "7000_7999": 8.4,
+        "8000_8999": 6.2,
+        "9000_9999": 5.8,
+        "10000_10999": 4.1,
+        "11000_11999": 4.0,
+        "12000_12999": 3.8,
+        "13000_13999": 2.8,
+        "14000_14999": 3.2,
+        "15000_and_above": 9.0
+      }
+    },
+    "Seberang Perai Selatan": {
+      "income_distribution": {
+        "B40": {"percentage": 43.1},
+        "M40": {"percentage": 42.7},
+        "T20": {"percentage": 14.2}
+      },
+      "household_distribution_by_income_class": {
+        "1999_and_below": 2.5,
+        "2000_2999": 6.3,
+        "3000_3999": 11.8,
+        "4000_4999": 13.4,
+        "5000_5999": 9.1,
+        "6000_6999": 9.0,
+        "7000_7999": 8.2,
+        "8000_8999": 7.9,
+        "9000_9999": 5.9,
+        "10000_10999": 6.0,
+        "11000_11999": 4.1,
+        "12000_12999": 1.6,
+        "13000_13999": 1.0,
+        "14000_14999": 3.3,
+        "15000_and_above": 9.9
+      }
+    },
+    "Timur Laut": {
+      "income_distribution": {
+        "B40": {"percentage": 36.1},
+        "M40": {"percentage": 43.5},
+        "T20": {"percentage": 20.4}
+      },
+      "household_distribution_by_income_class": {
+        "1999_and_below": 2.4,
+        "2000_2999": 6.8,
+        "3000_3999": 7.8,
+        "4000_4999": 11.2,
+        "5000_5999": 7.9,
+        "6000_6999": 8.2,
+        "7000_7999": 8.2,
+        "8000_8999": 8.3,
+        "9000_9999": 5.7,
+        "10000_10999": 6.2,
+        "11000_11999": 2.7,
+        "12000_12999": 4.2,
+        "13000_13999": 4.2,
+        "14000_14999": 2.5,
+        "15000_and_above": 13.7
+      }
+    },
+    "Barat Daya": {
+      "income_distribution": {
+        "B40": {"percentage": 23.3},
+        "M40": {"percentage": 50.6},
+        "T20": {"percentage": 26.1}
+      },
+      "household_distribution_by_income_class": {
+        "1999_and_below": 0.3,
+        "2000_2999": 2.9,
+        "3000_3999": 5.8,
+        "4000_4999": 5.5,
+        "5000_5999": 8.8,
+        "6000_6999": 11.7,
+        "7000_7999": 9.4,
+        "8000_8999": 6.0,
+        "9000_9999": 6.8,
+        "10000_10999": 6.5,
+        "11000_11999": 6.1,
+        "12000_12999": 4.1,
+        "13000_13999": 5.0,
+        "14000_14999": 3.6,
+        "15000_and_above": 17.5
+      }
+    }
+  },
+  "district_aliases": {
+    "georgetown": "Timur Laut",
+    "george town": "Timur Laut",
+    "northeast": "Timur Laut",
+    "southwest": "Barat Daya",
+    "balik pulau": "Barat Daya",
+    "butterworth": "Seberang Perai Tengah",
+    "central seberang perai": "Seberang Perai Tengah",
+    "north seberang perai": "Seberang Perai Utara",
+    "south seberang perai": "Seberang Perai Selatan",
+    "kepala batas": "Seberang Perai Utara",
+    "nibong tebal": "Seberang Perai Selatan"
+  }
+}

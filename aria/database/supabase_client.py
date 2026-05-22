@@ -236,16 +236,23 @@ class SupabaseClient:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params, headers=self.headers) as response:
                 if response.status != 200:
+                    print(f"[DEBUG] Reset token lookup failed with status {response.status}")
                     return False
                 result = await response.json()
                 if not result:
+                    print(f"[DEBUG] Reset token not found or already used (token: {token[:8]}...)")
                     return False
                 token_row = result[0]
 
         # Check expiry
         expires_at = token_row.get("expires_at", "")
         try:
-            expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            # Supabase returns timestamp without timezone — treat as UTC
+            expiry_str = expires_at.replace("Z", "+00:00")
+            expiry = datetime.fromisoformat(expiry_str)
+            # If naive (no timezone info), assume UTC
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=tz.utc)
             if datetime.now(tz.utc) > expiry:
                 return False
         except Exception:

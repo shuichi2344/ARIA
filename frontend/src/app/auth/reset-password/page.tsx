@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import { ArrowRight, Loader2 } from 'lucide-react'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -16,7 +16,6 @@ function validatePassword(password: string): string | null {
 
 export default function ResetPasswordPage() {
   const searchParams = useSearchParams()
-  const router = useRouter()
   const token = searchParams.get('token')
 
   const [newPassword, setNewPassword] = useState('')
@@ -59,7 +58,6 @@ export default function ResetPasswordPage() {
         return
       }
       setSuccess(true)
-      setTimeout(() => router.push('/'), 3000)
     } catch {
       setError('Could not connect to server. Please try again.')
     } finally {
@@ -105,9 +103,9 @@ export default function ResetPasswordPage() {
             padding: '1.25rem', background: '#f0fdf4', border: '1px solid #bbf7d0',
             borderRadius: 8, color: '#166534', fontSize: '0.9rem', textAlign: 'center',
           }}>
-            <strong>✓ Password reset successfully!</strong>
+            <strong>Password reset successfully!</strong>
             <p style={{ margin: '0.5rem 0 0', fontSize: '0.82rem' }}>
-              Redirecting to login...
+              You can now close this tab and log in with your new password.
             </p>
           </div>
         ) : (

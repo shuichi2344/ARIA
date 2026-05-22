@@ -170,7 +170,7 @@ export default function HistorySidebar({ open, onClose, history, onRestore, onDe
                         {snap.scenarioName}
                       </div>
                       <div style={{ fontSize: '0.72rem', color: 'var(--gray-500)', marginTop: 1 }}>
-                        {fmt(snap.completedAt)} · {snap.totalWeeks}w
+                        {fmt(snap.completedAt)}
                         {snap.finalMetrics && ` · RM ${snap.finalMetrics.total_revenue.toFixed(0)}`}
                       </div>
                     </div>

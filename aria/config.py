@@ -41,7 +41,7 @@ class Settings(BaseSettings):
         description="Ilmu AI API base URL"
     )
     ilmu_model: str = Field(
-        default="ilmu-nemo-nano",
+        default="nemo-super",
         description="Ilmu AI model to use (nemo-super or ilmu-nemo-nano)"
     )
     

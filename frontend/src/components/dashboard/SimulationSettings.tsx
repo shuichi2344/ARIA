@@ -71,19 +71,29 @@ export default function SimulationSettings({ district, disabled, onSettingsChang
 
   // Initialize constraints when profile loads
   useEffect(() => {
-    if (isB2B || isHybrid) {
+    if (isB2B) {
+      // Pure B2B: use target business types
       if (availableTargetTypes.length > 0 && targetCustomerConstraints.length === 0) {
         setTargetCustomerConstraints([...availableTargetTypes])
       }
-      if (availableBusinessSizes.length > 0 && businessSizeConstraints.length === 0) {
-        setBusinessSizeConstraints([...availableBusinessSizes])
+    } else if (isHybrid) {
+      // HYBRID: combine both B2B types and B2C segments
+      if (targetCustomerConstraints.length === 0) {
+        const combined = [...new Set([...availableTargetTypes, ...availableTargetSegments])]
+        if (combined.length > 0) {
+          setTargetCustomerConstraints(combined)
+        }
       }
-    }
-    if (!isB2B) {
-      // B2C or HYBRID: also init B2C target segments
+    } else {
+      // Pure B2C: use target segments
       if (availableTargetSegments.length > 0 && targetCustomerConstraints.length === 0) {
         setTargetCustomerConstraints([...availableTargetSegments])
       }
+    }
+    
+    // Business sizes (B2B and HYBRID)
+    if ((isB2B || isHybrid) && availableBusinessSizes.length > 0 && businessSizeConstraints.length === 0) {
+      setBusinessSizeConstraints([...availableBusinessSizes])
     }
   }, [customerType]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -154,9 +164,11 @@ export default function SimulationSettings({ district, disabled, onSettingsChang
   }
 
   // ─── Shared: Target Customers Section ───
-  const renderTargetCustomers = (label: string, items: string[]) => {
-    // Merge original items with any custom-added ones from targetCustomerConstraints
-    const allItems = [...new Set([...items, ...targetCustomerConstraints])]
+  const renderTargetCustomers = (label: string, items: string[], filterToItems: boolean = false) => {
+    // If filterToItems is true, only show items from the provided list (don't merge with full state)
+    const allItems = filterToItems
+      ? [...new Set(items)]
+      : [...new Set([...items, ...targetCustomerConstraints])]
     
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
@@ -284,7 +296,7 @@ export default function SimulationSettings({ district, disabled, onSettingsChang
         {/* B2B Section */}
         <div style={{ padding: '0.5rem', background: 'white', borderRadius: 6, border: '1px solid var(--gray-200)' }}>
           <p style={{ margin: '0 0 0.3rem', fontSize: '0.7rem', fontWeight: 700, color: 'var(--gray-600)' }}>🏢 B2B Customers</p>
-          {availableTargetTypes.length > 0 && renderTargetCustomers('Business Types', availableTargetTypes)}
+          {availableTargetTypes.length > 0 && renderTargetCustomers('Business Types', availableTargetTypes, true)}
           {availableBusinessSizes.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', marginTop: '0.3rem' }}>
               <p style={{ margin: 0, fontSize: '0.7rem', fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Sizes</p>
@@ -303,7 +315,7 @@ export default function SimulationSettings({ district, disabled, onSettingsChang
         {/* B2C Section */}
         <div style={{ padding: '0.5rem', background: 'white', borderRadius: 6, border: '1px solid var(--gray-200)' }}>
           <p style={{ margin: '0 0 0.3rem', fontSize: '0.7rem', fontWeight: 700, color: 'var(--gray-600)' }}>👤 B2C Customers</p>
-          {availableTargetSegments.length > 0 && renderTargetCustomers('Target Segments', availableTargetSegments)}
+          {availableTargetSegments.length > 0 && renderTargetCustomers('Target Segments', availableTargetSegments, true)}
           {demographics && (
             <>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', marginTop: '0.3rem' }}>

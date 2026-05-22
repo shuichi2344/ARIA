@@ -43,8 +43,8 @@ class LLMAgentBrain:
     
     # Shared income level descriptions so the model understands Malaysian context
     INCOME_DESCRIPTIONS = {
-        "B40": "B40 (Bottom 40% - household income below RM4,850/month). Price-conscious, sensitive to price change and have very minimal spending power. You will SKIP or CHURN if the change is extremely unreasonable/high.",
-        "M40": "M40 (Middle 40% - household income RM4,850-RM10,970/month). Low to moderate spending power and is only tolerant of small increases under your affordabiltity. You will SKIP or CHURN if the change is extremely unreasonable/high.",
+        "B40": "B40 (Bottom 40% - household income below RM4,850/month). Price-conscious with limited disposable income and minimal spending power. A 5-10% increase is uncomfortable but you'll still visit occasionally. You will SKIP or CHURN if the change is extremely unreasonable/high.",
+        "M40": "M40 (Middle 40% - household income RM4,850-RM10,970/month). Low to oderate spending power. A 5-15% increase is noticeable — you'll may still consider visit. You will SKIP or CHURN if the change is extremely unreasonable/high.",
         "T20": "T20 (Top 20% - household income above RM10,970/month). Higher disposable income,compared to M40 and B40. Price is not a major concern for you but you will SKIP or CHURN if the change is extremely unreasonable/high.",
     }
     
@@ -282,9 +282,9 @@ Profile:"""
         # Scenario-specific decision guidelines
         if scenario_type in ('price_change', 'pricing'):
             guidelines = """DECISION GUIDELINES (Price Change Scenario):
-- VISIT: You can still afford it comfortably. No change to your habits.
-- SKIP: It's a stretch but you'll still go occasionally, just less often.
-- CHURN: It's no longer worth it or affordable. You'll switch to a cheaper alternative."""
+- VISIT: The price increase is within your tolerance. You can still afford it and will keep coming.
+- SKIP: The increase is noticeable — you'll reduce how often you visit, but won't stop entirely.
+- CHURN: The increase is far beyond what you can justify. You'll find an alternative permanently."""
         elif scenario_type == 'demand_surge':
             guidelines = """DECISION GUIDELINES (Demand Surge Scenario):
 - VISIT: You still want to go despite it being busier. You're loyal or it's worth the wait.
@@ -415,30 +415,33 @@ Spend: [amount in RM you'd spend if visiting, or 0]"""
         if peer_messages:
             peer_block = "\nWhat other businesses are saying:\n" + "\n".join(f"- {m}" for m in peer_messages[:3])
         
-        # B2B size sensitivity (Micro businesses are more cost-sensitive)
+        # B2B size sensitivity 
         size_block = ""
         if business_size:
             size_map = {
                 "Micro": (
                     "You are a Micro business in Malaysia (less than RM300,000 turnover or fewer than 5 employees). "
-                    "You operate with limited resources and value flexibility in supplier relationships. "
-                    "You prioritize reliable delivery and consistent quality to maintain your customer base. "
-                    "You prefer suppliers who understand your cash flow constraints and offer flexible payment arrangements. "
-                    "Personal relationships and trust are important in your supplier selection process."
+                    "You have tight margins and limited cash flow — every cost increase directly impacts your bottom line. "
+                    "However, switching suppliers is still risky for you (lost credit terms, delivery disruption). "
+                    "A 5-10% price increase hurts but you'll likely absorb it while looking for alternatives. "
+                    "A 10-20% increase makes you consider reducing orders or finding a cheaper supplier. "
+                    "Above 20% you will likely switch because your margins cannot sustain it."
                 ),
                 "Small": (
                     "You are a Small business in Malaysia (RM300,000 to less than RM3 million turnover or 5-30 employees). "
-                    "You're focused on growth and building a sustainable business model. "
-                    "You value suppliers who can scale with your business and provide consistent quality. "
-                    "You have some procurement processes but still prioritize relationships and reliability. "
-                    "You appreciate suppliers who offer technical support and understand your industry needs."
+                    "You have moderate margins and established procurement processes. "
+                    "Switching suppliers means retraining staff, renegotiating terms, and risking delivery disruptions. "
+                    "A 5-15% price increase is manageable — you'll negotiate or absorb it rather than switch. "
+                    "A 15-25% increase makes you reduce orders or actively seek alternatives. "
+                    "You would only switch if the increase exceeds 25% or service quality declines significantly."
                 ),
                 "Medium": (
                     "You are a Medium-sized business in Malaysia (RM3 million to less than RM20 million turnover or 30-75 employees). "
-                    "You have established operations and focus on efficiency and strategic partnerships. "
-                    "You value suppliers who can provide comprehensive solutions and integrate with your systems. "
-                    "You consider long-term value and service quality in your procurement decisions. "
-                    "You prefer suppliers who understand your business objectives and can contribute to your competitive advantage."
+                    "You have healthy margins, formal procurement processes, and long-term supplier contracts. "
+                    "Switching suppliers requires board approval, contract renegotiation, and transition planning. "
+                    "A 5-15% price increase is a normal cost of doing business — you budget for annual increases. "
+                    "A 15-25% increase is notable but you'll negotiate rather than switch. "
+                    "Only increases above 25% or fundamental service failures would trigger a supplier change."
                 ),
             }
             size_block = f"\n\nYOUR BUSINESS PROFILE:\n{size_map.get(business_size, size_map['Small'])}"
@@ -452,9 +455,11 @@ Your supplier has made this change: {scenario_desc}
 As a business customer, decide: will you CONTINUE (keep ordering as usual), REDUCE (order less or delay), or SWITCH (find a new supplier)?
 
 DECISION GUIDELINES:
-- CONTINUE: The change is acceptable or beneficial to your operations. (output as "visit")
-- REDUCE: The change makes you order less or delay procurement, but you're not leaving yet. (output as "skip")
-- SWITCH: The change makes the service no longer a good fit. You'll find an alternative. (output as "churn")
+- CONTINUE: The change is within normal business expectations. (output as "visit")
+- REDUCE: The change is significant enough to make you cautious — you'll order less or delay, but switching is too costly/risky right now. (output as "skip")
+- SWITCH: The change is extreme or breaks trust entirely. Only switch if the cost increase exceeds your budget and affordability, quality drops drastically, or the relationship is fundamentally broken. (output as "churn")
+
+IMPORTANT: Businesses are sticky. Switching suppliers is expensive (lost credit terms, retraining, delivery risk, contract penalties). Most businesses absorb moderate price increases (5-15%) rather than switch. Only SWITCH for extreme changes.
 
 Consider: your business size, the actual cost impact on your operations, the strength of your relationship, the cost of switching suppliers, and what your peers are doing.
 

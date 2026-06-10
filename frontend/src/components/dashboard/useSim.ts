@@ -1,10 +1,62 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
-import type { Agent, Scenario, SimStatus, WeekSummary, FeedItem, InfluenceEdge, SimSnapshot } from './types'
+import type { Agent, Scenario, SimStatus, WeekSummary, FeedItem, InfluenceEdge, SimSnapshot, SimReport } from './types'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 let feedCounter = 0
+
+// Sentinel ID for the "live" tab (currently running simulation)
+export const LIVE_TAB_ID = '__live__'
+
+export interface CompletedSim {
+  id: string           // simulation_id from backend
+  scenarioName: string
+  scenarioType: string
+  metrics: WeekSummary | null
+  agents: Agent[]
+  feed: FeedItem[]
+  influences: InfluenceEdge[]
+  report: any          // raw report from simulation_complete event
+}
+
+function mapHistoryItem(h: any): SimSnapshot {
+  const r = h.report
+  const agentCount = h.agent_count || 0
+  const report: SimReport | null = r ? {
+    risk_level:            r.risk_level || 'Unknown',
+    churn_rate:            r.churn_rate ?? 0,
+    visit_rate:            r.visit_rate ?? 0,
+    estimated_revenue:     r.estimated_revenue ?? 0,
+    total_agents:          agentCount,
+    archetype_breakdown:   r.archetype_breakdown || {},
+    recommendations:       r.recommendations || [],
+    analysis:              r.analysis || '',
+  } : null
+
+  const finalMetrics: import('./types').WeekSummary | null = r ? {
+    week:           1,
+    total_visits:   r.visit_rate != null ? Math.round((r.visit_rate / 100) * agentCount) : 0,
+    total_revenue:  r.estimated_revenue ?? 0,
+    active_agents:  r.churn_rate != null ? Math.round(((100 - r.churn_rate) / 100) * agentCount) : agentCount,
+    churned_agents: r.churn_rate != null ? Math.round((r.churn_rate / 100) * agentCount) : 0,
+  } : null
+
+  return {
+    id:           h.simulation_id,
+    scenarioName: h.scenario_name,
+    scenarioType: h.scenario_type,
+    description:  h.description || '',
+    completedAt:  h.completed_at,
+    totalWeeks:   1,
+    finalMetrics,
+    report,
+    sessionId:    h.session_id || null,
+    agents:       [],
+    feed:         [],
+    influences:   [],
+  }
+}
 
 export function useSim(sessionId: string, profileId?: string) {
   const [status,        setStatus]        = useState<SimStatus>('idle')
@@ -18,6 +70,12 @@ export function useSim(sessionId: string, profileId?: string) {
   const [scenarioType,  setScenarioType]  = useState('')
   const [influences,    setInfluences]    = useState<InfluenceEdge[]>([])
   const [history,       setHistory]       = useState<SimSnapshot[]>([])
+  const [restoredReport, setRestoredReport] = useState<SimReport | null>(null)
+  const [restoredDescription, setRestoredDescription] = useState<string>('')
+
+  // In-session completed simulations — drives the tab bar
+  const [completedSims, setCompletedSims] = useState<CompletedSim[]>([])
+  const [activeTabId,   setActiveTabId]   = useState<string | null>(null)
 
   // Fetch history from database on mount
   useEffect(() => {
@@ -25,23 +83,7 @@ export function useSim(sessionId: string, profileId?: string) {
     fetch(`${API_BASE}/api/simulation/history/${profileId}`)
       .then(res => res.ok ? res.json() : { history: [] })
       .then(data => {
-        const items: SimSnapshot[] = (data.history || []).map((h: any) => ({
-          id:           h.simulation_id,
-          scenarioName: h.scenario_name,
-          scenarioType: h.scenario_type,
-          completedAt:  h.completed_at,
-          totalWeeks:   1,
-          finalMetrics: h.report ? {
-            total_visits:    0,
-            total_revenue:   h.report.estimated_revenue || 0,
-            active_agents:   h.agent_count || 0,
-            churned_agents:  0,
-            week:            1,
-          } : null,
-          agents:       [],
-          feed:         [],
-          influences:   [],
-        }))
+        const items: SimSnapshot[] = (data.history || []).map((h: any) => mapHistoryItem(h))
         setHistory(items)
       })
       .catch(() => {})
@@ -94,7 +136,7 @@ export function useSim(sessionId: string, profileId?: string) {
     })
   }
 
-  const launch = useCallback(async (scenario: Scenario, agentCount: number = 25, options?: { income_constraints?: string[] | null; age_constraints?: string[] | null; target_customer_constraints?: string[] | null; business_size_constraints?: string[] | null; b2b_percentage?: number | null }) => {
+  const launch = useCallback(async (scenario: Scenario, agentCount: number = 25, options?: { income_constraints?: string[] | null; age_constraints?: string[] | null; target_customer_constraints?: string[] | null; business_size_constraints?: string[] | null; b2b_percentage?: number | null; chat_session_id?: string | null }) => {
     // Cancel the previous simulation on the backend before starting a new one
     if (simIdRef.current) {
       fetch(`${API_BASE}/api/simulation/${simIdRef.current}/cancel`, { method: 'POST' }).catch(() => {})
@@ -114,6 +156,9 @@ export function useSim(sessionId: string, profileId?: string) {
     influencesRef.current = []
     setMetrics(null)
     metricsRef.current = null
+    setRestoredReport(null)
+    setRestoredDescription('')
+    setActiveTabId(LIVE_TAB_ID)
 
     setStatus('running')
     setScenarioName(scenario.scenario_name)
@@ -137,6 +182,7 @@ export function useSim(sessionId: string, profileId?: string) {
           target_customer_constraints: options?.target_customer_constraints ?? null,
           business_size_constraints:   options?.business_size_constraints ?? null,
           b2b_percentage:              options?.b2b_percentage ?? null,
+          chat_session_id:             options?.chat_session_id ?? null,
         }),
       })
       if (!res.ok) {
@@ -220,6 +266,24 @@ export function useSim(sessionId: string, profileId?: string) {
         addFeed('system', `Simulation complete! ${d.summary || ''}`)
         es.close()
 
+        // Snapshot the completed simulation for the tab bar
+        const completedId = simIdRef.current || data.simulation_id
+        setCompletedSims(() => {
+          const snap: CompletedSim = {
+            id:           completedId,
+            scenarioName: scenarioNameRef.current,
+            scenarioType: scenarioTypeRef.current,
+            metrics:      metricsRef.current,
+            agents:       agentsRef.current,
+            feed:         feedRef.current,
+            influences:   influencesRef.current,
+            report:       d.report,
+          }
+          // Always keep only one completed sim per chat session
+          return [snap]
+        })
+        setActiveTabId(completedId)
+
         // Pass report to chat via global callback
         if ((window as any).__ariaAddCompletionMessage) {
           ;(window as any).__ariaAddCompletionMessage(d.summary, d.report)
@@ -230,23 +294,7 @@ export function useSim(sessionId: string, profileId?: string) {
           fetch(`${API_BASE}/api/simulation/history/${profileId}`)
             .then(res => res.ok ? res.json() : { history: [] })
             .then(data => {
-              const items: SimSnapshot[] = (data.history || []).map((h: any) => ({
-                id:           h.simulation_id,
-                scenarioName: h.scenario_name,
-                scenarioType: h.scenario_type,
-                completedAt:  h.completed_at,
-                totalWeeks:   1,
-                finalMetrics: h.report ? {
-                  total_visits:    0,
-                  total_revenue:   h.report.estimated_revenue || 0,
-                  active_agents:   h.agent_count || 0,
-                  churned_agents:  0,
-                  week:            1,
-                } : null,
-                agents:       [],
-                feed:         [],
-                influences:   [],
-              }))
+              const items: SimSnapshot[] = (data.history || []).map((h: any) => mapHistoryItem(h))
               setHistory(items)
             })
             .catch(() => {})
@@ -287,6 +335,10 @@ export function useSim(sessionId: string, profileId?: string) {
     setFeed(snap.feed)
     setInfluences(snap.influences)
     setIsPaused(false)
+    setRestoredReport(snap.report)
+    setRestoredDescription(snap.description || '')
+    setCompletedSims([])
+    setActiveTabId(null)
     agentsRef.current     = snap.agents
     feedRef.current       = snap.feed
     influencesRef.current = snap.influences
@@ -317,6 +369,10 @@ export function useSim(sessionId: string, profileId?: string) {
     setScenarioName('')
     setScenarioType('')
     setInfluences([])
+    setRestoredReport(null)
+    setRestoredDescription('')
+    setCompletedSims([])
+    setActiveTabId(null)
     feedRef.current = []
     agentsRef.current = []
     influencesRef.current = []
@@ -331,6 +387,8 @@ export function useSim(sessionId: string, profileId?: string) {
     isPaused, feed, scenarioName, influences,
     history, restoreSnapshot, deleteSnapshot,
     launch, togglePause, reset,
+    restoredReport, restoredDescription,
+    completedSims, activeTabId, setActiveTabId,
   }
 }
 

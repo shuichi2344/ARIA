@@ -63,6 +63,40 @@ export interface DemographicsResponse {
   age_distribution: Record<string, { percentage: number }>
 }
 
+// Spark API types
+export interface SparkCreatePayload {
+  user_id: string
+  template_id: string
+  name?: string
+}
+
+export interface SparkAnswerPayload {
+  user_id: string
+  question_id: string
+  answer_text: string
+}
+
+export interface SparkActivatePayload {
+  user_id: string
+  session_id: string
+}
+
+export interface SparkUpdatePayload {
+  user_id: string
+  name?: string
+  answer_updates?: Record<string, string>
+}
+
+export interface QAStateResponse {
+  spark_id: string
+  status: 'draft' | 'in_progress' | 'completed'
+  current_question: { id: string; label: string; text: string } | null
+  current_question_index: number
+  total_questions: number
+  aria_message: string
+  validation_error: string | null
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { 'Content-Type': 'application/json' },
@@ -114,4 +148,41 @@ export const api = {
 
   getDemographics: (district: string) =>
     apiFetch<DemographicsResponse>(`/api/demographics/${encodeURIComponent(district)}`),
+
+  // Spark API
+  fetchSparkTemplates: () =>
+    apiFetch<{ templates: import('../components/dashboard/types').SparkTemplate[] }>('/api/sparks/templates'),
+
+  fetchSparks: (userId: string) =>
+    apiFetch<{ sparks: import('../components/dashboard/types').SparkRecord[] }>(`/api/sparks?user_id=${encodeURIComponent(userId)}`),
+
+  createSpark: (data: SparkCreatePayload) =>
+    apiFetch<import('../components/dashboard/types').SparkRecord>('/api/sparks', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  submitSparkAnswer: (sparkId: string, data: SparkAnswerPayload) =>
+    apiFetch<QAStateResponse>(`/api/sparks/${sparkId}/answer`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  activateSpark: (sparkId: string, data: SparkActivatePayload) =>
+    apiFetch<{ status: string; spark_id: string; session_id: string }>(
+      `/api/sparks/${sparkId}/activate`,
+      { method: 'POST', body: JSON.stringify(data) }
+    ),
+
+  deactivateSpark: (sessionId: string, userId: string) =>
+    apiFetch<{ status: string }>(
+      `/api/session/${sessionId}/spark/deactivate?user_id=${encodeURIComponent(userId)}`,
+      { method: 'POST' }
+    ),
+
+  deleteSpark: (sparkId: string, userId: string) =>
+    apiFetch<{ status: string }>(
+      `/api/sparks/${sparkId}?user_id=${encodeURIComponent(userId)}`,
+      { method: 'DELETE' }
+    ),
 }

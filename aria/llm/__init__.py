@@ -12,8 +12,6 @@ from aria.llm.ollama_client import OllamaClient, OllamaError
 from aria.llm.ilmu_client import IlmuClient, IlmuError
 from aria.llm.llm_client import LLMClient, LLMClientError
 from aria.llm import prompts
-from aria.llm import parsers
-from aria.llm.parsers import ParsingError
 
 __all__ = [
     "LLMClient",
@@ -23,6 +21,4 @@ __all__ = [
     "OllamaClient",
     "OllamaError",
     "prompts",
-    "parsers",
-    "ParsingError",
 ]

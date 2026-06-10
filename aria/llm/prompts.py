@@ -62,7 +62,7 @@ For each scenario, provide:
 - scenario_name: Short descriptive name
 - scenario_type: A concise snake_case label describing the scenario (e.g. price_change, branch_expansion, loyalty_program, staff_reduction). Invent the right type for the situation — do not limit yourself to a fixed list.
 - description: Clear explanation of the scenario from the customer's perspective — what changes and how customers experience it
-- parameters: Specific values to simulate (e.g., {{"price_change_percent": -10}}). Include "price_change_percent" if prices change, otherwise use descriptive keys relevant to the scenario.
+- parameters: Specific values to simulate (e.g., {"price_change_percent": -10}). Include "price_change_percent" if prices change, otherwise use descriptive keys relevant to the scenario.
 - relevance_score: 0-100 (how relevant to user's question)
 - expected_impact: Brief prediction of potential impact
 
@@ -80,7 +80,8 @@ def scenario_suggestion_with_context(
     user_question: str,
     news_articles: List[Dict[str, Any]],
     economic_indicators: Dict[str, Any],
-    holiday_context: str = ""
+    holiday_context: str = "",
+    spark_section: str = ""
 ) -> str:
     """
     Generate prompt for suggesting scenarios with real-world context.
@@ -124,6 +125,9 @@ Real-World Context:
     if holiday_context:
         prompt += f"\nMalaysia Public Holidays (Pulau Pinang):\n{holiday_context}\n"
 
+    if spark_section:
+        prompt += f"\n{spark_section}\n"
+
     prompt += """
 Your task is to generate 2-3 CUSTOM scenarios that can be SIMULATED with consumer agents making visit/purchase decisions.
 
@@ -148,54 +152,54 @@ WHAT CANNOT BE SIMULATED:
 - ❌ Anything where customers wouldn't notice or react differently
 
 EXAMPLE FOR "How will fuel prices affect my business?":
-{{
+{
   "analysis": "Rising fuel prices affect your business in two ways: (1) customers have less disposable income for dining out, especially B40 households, and (2) your supply costs may increase, forcing you to raise prices.",
   "recommended_action": "Monitor customer visit frequency and consider absorbing some cost increases initially to maintain customer loyalty.",
   "scenarios": [
-    {{
+    {
       "scenario_name": "Customers Reduce Visits Due to Fuel Costs",
       "scenario_type": "economic_shock",
       "description": "Fuel prices increased 10%. B40 customers (40% of your area) reduce dining out by 20% to save money. M40 customers reduce by 10%.",
-      "parameters": {{"price_change_percent": 0, "b40_visit_reduction_percent": 20, "m40_visit_reduction_percent": 10, "duration_weeks": 4}},
+      "parameters": {"price_change_percent": 0, "b40_visit_reduction_percent": 20, "m40_visit_reduction_percent": 10, "duration_weeks": 4},
       "relevance_score": 95,
       "expected_impact": "15-20% reduction in total visits, especially from B40 customers"
-    }},
-    {{
+    },
+    {
       "scenario_name": "Price Increase to Cover Fuel Costs",
       "scenario_type": "price_change",
       "description": "You raise prices by 5% to cover increased supply costs from fuel price hike. Price-sensitive customers may reduce visits.",
-      "parameters": {{"price_change_percent": 5}},
+      "parameters": {"price_change_percent": 5},
       "relevance_score": 90,
       "expected_impact": "B40 customers highly sensitive to price increase, may reduce visits by 15-25%"
-    }}
+    }
   ],
   "context_summary": "Fuel prices up 10% affects customer spending power and your supply costs"
-}}
+}
 
 EXAMPLE FOR "What happens if I open a new branch in Bayan Lepas?":
-{{
+{
   "analysis": "Opening a new branch means customers in Bayan Lepas will encounter your cafe for the first time. We can simulate how they adopt it, whether pricing draws them in, and how loyal they become.",
   "recommended_action": "Test customer adoption at the new location with different opening strategies.",
   "scenarios": [
-    {{
+    {
       "scenario_name": "New Branch Grand Opening",
       "scenario_type": "branch_expansion",
       "description": "Your cafe opens a new branch in Bayan Lepas. Customers in the area now have access to your cafe for the first time. Simulate how many would visit, return, or ignore it based on their income level and habits.",
-      "parameters": {{"price_change_percent": 0, "new_location": true, "grand_opening": true}},
+      "parameters": {"price_change_percent": 0, "new_location": true, "grand_opening": true},
       "relevance_score": 95,
       "expected_impact": "Measure initial adoption rate and which customer segments are most likely to become regulars"
-    }},
-    {{
+    },
+    {
       "scenario_name": "Introductory Discount at New Branch",
       "scenario_type": "branch_expansion_with_promotion",
       "description": "New branch opens with a 15% introductory discount for the first month. Customers weigh the savings against the effort of trying a new place.",
-      "parameters": {{"price_change_percent": -15, "new_location": true, "promotion_duration_weeks": 4}},
+      "parameters": {"price_change_percent": -15, "new_location": true, "promotion_duration_weeks": 4},
       "relevance_score": 88,
       "expected_impact": "Higher initial footfall from price-sensitive B40/M40 customers; test if they return after discount ends"
-    }}
+    }
   ],
   "context_summary": "Bayan Lepas has mixed income demographics; new branch success depends on customer adoption and local competition"
-}}
+}
 
 Now generate scenarios for the user's actual question. Remember: scenarios must be SIMULATABLE with customer agents making visit/purchase decisions. Return ONLY valid JSON with the structure shown above."""
     return prompt

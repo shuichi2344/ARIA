@@ -4,10 +4,19 @@ import { useState, useEffect, useCallback } from 'react'
 import { api } from '@/lib/api'
 import type { DemographicsResponse } from '@/lib/api'
 
+export type SimulationMode = 'fast' | 'balanced' | 'accurate'
+
+export const SIMULATION_MODES: Record<SimulationMode, { label: string; agentCount: number; description: string; colorLight: string; colorBorder: string; colorText: string }> = {
+  fast:     { label: 'Fast',     agentCount: 20,  description: 'Quick results, less detail',     colorLight: '#fce7f3', colorBorder: '#ec4899', colorText: '#be185d' },
+  balanced: { label: 'Balanced', agentCount: 50,  description: 'Good mix of speed and accuracy', colorLight: '#fef9c3', colorBorder: '#eab308', colorText: '#854d0e' },
+  accurate: { label: 'Accurate', agentCount: 100, description: 'Most detailed, takes longer',    colorLight: '#dcfce7', colorBorder: '#22c55e', colorText: '#15803d' },
+}
+
 export interface SimulationSettingsState {
   incomeConstraints: string[]
   ageConstraints: string[]
   agentCount: number
+  simulationMode: SimulationMode
   targetCustomerConstraints: string[]
   businessSizeConstraints: string[]
   b2bPercentage: number | null  // null for non-hybrid
@@ -40,8 +49,11 @@ export default function SimulationSettings({ district, disabled, onSettingsChang
   // Hybrid
   const [b2bPercentage, setB2bPercentage] = useState(50)
   
-  const [agentCount, setAgentCount] = useState(25)
+  const [simulationMode, setSimulationMode] = useState<SimulationMode>('balanced')
   const [validationMsg, setValidationMsg] = useState<string | null>(null)
+
+  // Derive agent count from selected mode
+  const agentCount = SIMULATION_MODES[simulationMode].agentCount
 
   // Derive customer type
   const customerType = (customerProfile?.customer_type as string) || 'B2C'
@@ -146,11 +158,12 @@ export default function SimulationSettings({ district, disabled, onSettingsChang
       incomeConstraints,
       ageConstraints,
       agentCount,
+      simulationMode,
       targetCustomerConstraints,
       businessSizeConstraints,
       b2bPercentage: isHybrid ? b2bPercentage : null,
     })
-  }, [incomeConstraints, ageConstraints, agentCount, targetCustomerConstraints, businessSizeConstraints, b2bPercentage, isHybrid, onSettingsChange])
+  }, [incomeConstraints, ageConstraints, agentCount, simulationMode, targetCustomerConstraints, businessSizeConstraints, b2bPercentage, isHybrid, onSettingsChange])
 
   if (loading) {
     return (
@@ -226,18 +239,39 @@ export default function SimulationSettings({ district, disabled, onSettingsChang
     )
   }
 
-  // ─── Shared: Agent Count ───
-  const renderAgentCount = () => (
+  // ─── Shared: Simulation Mode ───
+  const renderSimulationMode = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
       <p style={{ margin: 0, fontSize: '0.7rem', fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-        Agent Count
+        Simulation Mode
       </p>
-      <input
-        type="number" min={15} max={100} value={agentCount} disabled={disabled}
-        onChange={e => { const v = parseInt(e.target.value, 10); if (!isNaN(v)) setAgentCount(v) }}
-        onBlur={() => setAgentCount(prev => Math.min(100, Math.max(15, prev)))}
-        style={{ width: '5rem', padding: '0.3rem 0.5rem', fontSize: '0.78rem', borderRadius: 4, border: '1px solid var(--gray-300)', background: disabled ? 'var(--gray-100)' : 'white' }}
-      />
+      <div style={{ display: 'flex', gap: '0.4rem' }}>
+        {(Object.entries(SIMULATION_MODES) as [SimulationMode, typeof SIMULATION_MODES[SimulationMode]][]).map(([mode, config]) => (
+          <button
+            key={mode}
+            onClick={() => !disabled && setSimulationMode(mode)}
+            disabled={disabled}
+            title={config.description}
+            style={{
+              flex: 1,
+              padding: '0.45rem 0.4rem',
+              fontSize: '0.75rem',
+              fontWeight: simulationMode === mode ? 700 : 500,
+              borderRadius: 6,
+              border: `1.5px solid ${simulationMode === mode ? config.colorBorder : '#e5e7eb'}`,
+              background: simulationMode === mode ? config.colorLight : 'white',
+              color: simulationMode === mode ? config.colorText : 'var(--gray-500)',
+              cursor: disabled ? 'not-allowed' : 'pointer',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            {config.label}
+          </button>
+        ))}
+      </div>
+      <p style={{ margin: 0, fontSize: '0.68rem', color: 'var(--gray-400)', fontStyle: 'italic' }}>
+        {SIMULATION_MODES[simulationMode].description} · {SIMULATION_MODES[simulationMode].agentCount} agents
+      </p>
     </div>
   )
 
@@ -263,7 +297,7 @@ export default function SimulationSettings({ district, disabled, onSettingsChang
           </div>
         )}
         {validationMsg && <p style={{ margin: 0, fontSize: '0.7rem', color: '#ef4444', fontStyle: 'italic' }} role="alert">{validationMsg}</p>}
-        {renderAgentCount()}
+        {renderSimulationMode()}
       </div>
     )
   }
@@ -347,7 +381,7 @@ export default function SimulationSettings({ district, disabled, onSettingsChang
         </div>
 
         {validationMsg && <p style={{ margin: 0, fontSize: '0.7rem', color: '#ef4444', fontStyle: 'italic' }} role="alert">{validationMsg}</p>}
-        {renderAgentCount()}
+        {renderSimulationMode()}
       </div>
     )
   }
@@ -399,7 +433,7 @@ export default function SimulationSettings({ district, disabled, onSettingsChang
       </div>
 
       {validationMsg && <p style={{ margin: 0, fontSize: '0.7rem', color: '#ef4444', fontStyle: 'italic' }} role="alert">{validationMsg}</p>}
-      {renderAgentCount()}
+      {renderSimulationMode()}
     </div>
   )
 }

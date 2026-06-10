@@ -5,9 +5,7 @@ Enhanced with real-world context from News API and DOSM economic data.
 """
 
 from typing import Dict, Any, List, Optional
-from aria.llm import LLMClient, prompts, parsers, ParsingError
-from aria.database.connection import get_session
-from aria.database import repositories
+from aria.llm import LLMClient, prompts
 from aria.external.news_api import NewsAPIClient
 from aria.external.dosm import DOSMClient
 from aria.external.malaysia_calendar import MalaysiaCalendarClient
@@ -266,7 +264,8 @@ class ScenarioSuggestionAgent:
         self,
         business_profile: Dict[str, Any],
         user_question: str,
-        use_external_context: bool = False
+        use_external_context: bool = False,
+        active_spark=None,  # Optional[SparkRecord] — type hint via string to avoid circular import
     ) -> Dict[str, Any]:
         """
         Analyze user's open-ended question and suggest scenarios.
@@ -330,6 +329,14 @@ class ScenarioSuggestionAgent:
         
         try:
             print("→ Building LLM prompt with context")
+
+            # Build Spark context section (lazy import to avoid circular dependency)
+            spark_section = ""
+            if active_spark is not None:
+                from aria.sparks.spark_templates import SPARK_TEMPLATES
+                from aria.sparks.spark_context_injector import SparkContextInjector
+                template = SPARK_TEMPLATES.get(active_spark.template_id)
+                spark_section = SparkContextInjector.build_spark_section(active_spark, template)
             
             # Generate scenario suggestions with context
             prompt = prompts.scenario_suggestion_with_context(
@@ -337,7 +344,8 @@ class ScenarioSuggestionAgent:
                 user_question=user_question,
                 news_articles=context["news_articles"],
                 economic_indicators=context["economic_indicators"],
-                holiday_context=context.get("holiday_context", "")
+                holiday_context=context.get("holiday_context", ""),
+                spark_section=spark_section,
             )
             
             print(f"  Prompt length: {len(prompt)} characters")

@@ -69,10 +69,61 @@ export interface SimSnapshot {
   id: string                  // uuid
   scenarioName: string
   scenarioType: string
+  description: string
   completedAt: string         // ISO string
   totalWeeks: number
   finalMetrics: WeekSummary | null
+  report: SimReport | null
+  sessionId: string | null    // chat session to restore messages from
   agents: Agent[]
   feed: FeedItem[]
   influences: InfluenceEdge[]
+}
+
+export interface SimReport {
+  risk_level: string
+  churn_rate: number
+  visit_rate: number
+  estimated_revenue: number
+  total_agents: number
+  archetype_breakdown: Record<string, { visit_pct: number; skip_pct: number; churn_pct: number }>
+  recommendations: string[]
+  analysis?: string
+}
+
+// ---------------------------------------------------------------------------
+// Spark types (Context Sparks feature)
+// ---------------------------------------------------------------------------
+
+export interface SparkQuestion {
+  id: string
+  label: string
+  text: string
+}
+
+export interface SparkTemplate {
+  id: string
+  name: string
+  description: string
+  questions: SparkQuestion[]
+}
+
+export interface SparkRecord {
+  spark_id: string
+  user_id: string
+  template_id: string
+  name: string
+  status: 'draft' | 'in_progress' | 'completed'
+  answers: Record<string, string>
+  created_at: string
+  updated_at: string
+}
+
+export type SparkQAMode = 'idle' | 'answering' | 'complete'
+
+export interface SparkQAState {
+  spark_id: string
+  mode: SparkQAMode
+  current_question_index: number
+  total_questions: number
 }

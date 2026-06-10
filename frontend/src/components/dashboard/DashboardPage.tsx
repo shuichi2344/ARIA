@@ -8,9 +8,10 @@ import ChatPanel from './ChatPanel'
 import ActivityFeed from './ActivityFeed'
 import InfluenceGraph from './InfluenceGraph'
 import HistorySidebar from './HistorySidebar'
-import { useSim } from './useSim'
+import { useSim, LIVE_TAB_ID } from './useSim'
+import type { CompletedSim } from './useSim'
 import { useSession } from '@/context/SessionContext'
-import type { AriaSession, BusinessProfile } from './types'
+import type { AriaSession, BusinessProfile, SimReport } from './types'
 
 interface Props {
   session: AriaSession
@@ -62,6 +63,29 @@ export default function DashboardPage({ session }: Props) {
     router.push('/')
   }
 
+  function injectRestoredReport(snap: typeof sim.history[0]) {
+    if (!snap.report) return
+    const r = snap.report
+    const wrappedReport = {
+      risk_summary: {
+        risk_level:        r.risk_level,
+        churn_rate:        r.churn_rate,
+        visit_rate:        r.visit_rate,
+        estimated_revenue: r.estimated_revenue,
+        total_agents:      r.total_agents,
+      },
+      archetype_breakdown: r.archetype_breakdown,
+      breakdown_type:      'income',
+      recommendations:     r.recommendations,
+      analysis:            r.analysis || '',
+      disclaimer:          "Revenue is estimated from your business price range, adjusted by the scenario's price change.",
+      scenario:            { name: snap.scenarioName, description: snap.description },
+    }
+    if ((window as any).__ariaAddCompletionMessage) {
+      ;(window as any).__ariaAddCompletionMessage(`Restored: "${snap.scenarioName}"`, wrappedReport)
+    }
+  }
+
   // Progress based on how many agents have made decisions
   const decidedCount = sim.agents.filter(a => a.last_decision !== null).length
   const progressPct = sim.agents.length > 0
@@ -76,7 +100,36 @@ export default function DashboardPage({ session }: Props) {
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
         history={sim.history}
-        onRestore={snap => { sim.restoreSnapshot(snap); setHistoryOpen(false) }}
+        onRestore={snap => {
+          sim.restoreSnapshot(snap)
+          if ((window as any).__ariaNewChat) (window as any).__ariaNewChat()
+
+          if (snap.sessionId) {
+            // Fetch saved chat messages for this session and restore them
+            let userId = ''
+            try { const raw = localStorage.getItem('aria_session'); if (raw) userId = JSON.parse(raw).id || '' } catch {}
+            fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'}/api/chat/session/${snap.sessionId}/messages`)
+              .then(r => r.ok ? r.json() : { messages: [] })
+              .then(data => {
+                if (data.messages?.length > 0 && (window as any).__ariaRestoreMessages) {
+                  ;(window as any).__ariaRestoreMessages(data.messages)
+                } else if ((window as any).__ariaAddCompletionMessage && snap.report) {
+                  // Fallback: inject just the report card if no messages found
+                  setTimeout(() => injectRestoredReport(snap), 50)
+                }
+              })
+              .catch(() => {
+                if ((window as any).__ariaAddCompletionMessage && snap.report) {
+                  setTimeout(() => injectRestoredReport(snap), 50)
+                }
+              })
+          } else if ((window as any).__ariaAddCompletionMessage && snap.report) {
+            // No session_id saved (older simulations) — fall back to report card only
+            setTimeout(() => injectRestoredReport(snap), 50)
+          }
+
+          setHistoryOpen(false)
+        }}
         onDelete={sim.deleteSnapshot}
         onNewChat={() => {
           sim.reset()
@@ -218,60 +271,154 @@ export default function DashboardPage({ session }: Props) {
           )}
 
           {/* Active simulation */}
-          {(sim.status !== 'idle' || sim.agents.length > 0) && (
+          {(sim.status !== 'idle' || sim.agents.length > 0) && (() => {
+            // Resolve what to display based on active tab
+            const isLive = sim.activeTabId === LIVE_TAB_ID || sim.activeTabId === null
+            const tabSim = isLive ? null : sim.completedSims.find(s => s.id === sim.activeTabId)
+
+            const displayMetrics  = tabSim ? tabSim.metrics   : sim.metrics
+            const displayAgents   = tabSim ? tabSim.agents     : sim.agents
+            const displayFeed     = tabSim ? tabSim.feed       : sim.feed
+            const displayInfluences = tabSim ? tabSim.influences : sim.influences
+            const displayName     = tabSim ? tabSim.scenarioName : sim.scenarioName
+
+            // For restored history items shown in the summary panel
+            const showRestoredSummary = displayAgents.length === 0 && sim.status === 'done' && sim.restoredReport && sim.completedSims.length === 0
+
+            return (
             <div style={{
               flex: 1, display: 'flex', flexDirection: 'column',
               overflow: 'hidden', padding: '1rem 1.25rem', gap: '0.75rem',
             }}>
+              {/* Tab bar — only shown when there are 2+ simulations in session */}
+              {sim.completedSims.length > 1 && (
+                <div style={{
+                  display: 'flex', gap: '0.25rem', flexShrink: 0,
+                  borderBottom: '1px solid var(--gray-200)',
+                  paddingBottom: '0.5rem', overflowX: 'auto',
+                  scrollbarWidth: 'none',
+                }}>
+                  {sim.completedSims.map((s, i) => {
+                    const isActive = sim.activeTabId === s.id
+                    return (
+                      <button
+                        key={s.id}
+                        onClick={() => sim.setActiveTabId(s.id)}
+                        style={{
+                          flexShrink: 0,
+                          padding: '0.3rem 0.75rem',
+                          borderRadius: 6,
+                          border: `1.5px solid ${isActive ? 'var(--accent)' : 'var(--gray-200)'}`,
+                          background: isActive ? 'var(--accent-light, #e0f2fe)' : 'white',
+                          color: isActive ? 'var(--accent)' : 'var(--gray-600)',
+                          fontSize: '0.75rem', fontWeight: isActive ? 700 : 500,
+                          cursor: 'pointer', whiteSpace: 'nowrap',
+                          transition: 'all 0.15s ease',
+                        }}
+                      >
+                        {i + 1}. {s.scenarioName}
+                      </button>
+                    )
+                  })}
+                  {/* Live tab — shown while a sim is running */}
+                  {(sim.status === 'running' || sim.status === 'paused') && (
+                    <button
+                      onClick={() => sim.setActiveTabId(LIVE_TAB_ID)}
+                      style={{
+                        flexShrink: 0,
+                        padding: '0.3rem 0.75rem',
+                        borderRadius: 6,
+                        border: `1.5px solid ${isLive ? '#22c55e' : 'var(--gray-200)'}`,
+                        background: isLive ? '#f0fdf4' : 'white',
+                        color: isLive ? '#15803d' : 'var(--gray-600)',
+                        fontSize: '0.75rem', fontWeight: isLive ? 700 : 500,
+                        cursor: 'pointer', whiteSpace: 'nowrap',
+                        display: 'flex', alignItems: 'center', gap: '0.3rem',
+                      }}
+                    >
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', display: 'inline-block', animation: 'pulse-dot 1.2s infinite' }} />
+                      Live
+                    </button>
+                  )}
+                </div>
+              )}
+
               {/* Top bar */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                  <span style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--gray-900)' }}>
-                    {sim.scenarioName || '—'}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <CtrlBtn onClick={sim.togglePause} title="Pause / Resume">
-                    {sim.isPaused
-                      ? <svg style={{ width: 18, height: 18 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                      : <svg style={{ width: 18, height: 18 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-                    }
-                  </CtrlBtn>
-                </div>
+                <span style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--gray-900)' }}>
+                  {displayName || '—'}
+                </span>
+                {isLive && (sim.status === 'running' || sim.status === 'paused') && (
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <CtrlBtn onClick={sim.togglePause} title="Pause / Resume">
+                      {sim.isPaused
+                        ? <svg style={{ width: 18, height: 18 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                        : <svg style={{ width: 18, height: 18 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                      }
+                    </CtrlBtn>
+                  </div>
+                )}
               </div>
 
-              {/* Progress bar */}
-              <div style={{ height: 6, background: 'var(--gray-200)', borderRadius: 999, overflow: 'hidden', flexShrink: 0 }}>
-                <div style={{
-                  height: '100%',
-                  background: 'linear-gradient(90deg, var(--accent), var(--accent-light))',
-                  borderRadius: 999,
-                  width: `${progressPct}%`,
-                  transition: 'width 0.5s ease',
-                }} />
-              </div>
+              {/* Progress bar — only for live tab */}
+              {isLive && (
+                <div style={{ height: 6, background: 'var(--gray-200)', borderRadius: 999, overflow: 'hidden', flexShrink: 0 }}>
+                  <div style={{
+                    height: '100%',
+                    background: 'linear-gradient(90deg, var(--accent), var(--accent-light))',
+                    borderRadius: 999,
+                    width: `${progressPct}%`,
+                    transition: 'width 0.5s ease',
+                  }} />
+                </div>
+              )}
 
               {/* Metrics */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '0.6rem', flexShrink: 0 }}>
-                <MetricCard label="Total visits" value={sim.metrics?.total_visits ?? '—'} />
-                <MetricCard label="Revenue (RM)"     value={sim.metrics ? sim.metrics.total_revenue.toFixed(0) : '—'} tooltip="Estimated from your business price range (or income-based if not set), adjusted by the scenario's price change. Each visiting customer spends a random amount within your price range per visit." />
-                <MetricCard label="Active customers"    value={sim.metrics?.active_agents ?? '—'} />
-                <MetricCard label="Churned"          value={sim.metrics?.churned_agents ?? '—'} danger />
+                <MetricCard label="Total visits" value={displayMetrics?.total_visits ?? '—'} />
+                <MetricCard label="Revenue (RM)" value={displayMetrics ? displayMetrics.total_revenue.toFixed(0) : '—'} tooltip="Estimated from your business price range (or income-based if not set), adjusted by the scenario's price change. Each visiting customer spends a random amount within your price range per visit." />
+                <MetricCard label="Active customers" value={displayMetrics?.active_agents ?? '—'} />
+                <MetricCard label="Churned" value={displayMetrics?.churned_agents ?? '—'} danger />
               </div>
 
-              {/* Main area: influence graph (full width) + activity feed (collapsible right) */}
+              {/* Main area */}
               <div style={{
-                display: 'grid', gridTemplateColumns: '1fr 260px',
+                display: 'grid',
+                gridTemplateColumns: displayFeed.length > 0 ? '1fr 260px' : '1fr',
                 gap: '0.75rem', flex: 1, overflow: 'hidden', minHeight: 0,
               }}>
-                {/* Force-directed agent graph — the main view */}
-                <InfluenceGraph agents={sim.agents} influences={sim.influences} highlightedAgentId={highlightedAgentId} onClearHighlight={() => setHighlightedAgentId(null)} />
-
-                {/* Activity feed */}
-                <ActivityFeed items={sim.feed} onAgentClick={setHighlightedAgentId} highlightedAgentId={highlightedAgentId} />
+                {showRestoredSummary ? (
+                  <RestoredSummaryPanel report={sim.restoredReport!} description={sim.restoredDescription} />
+                ) : tabSim?.report && displayAgents.length === 0 ? (
+                  // Completed tab with a saved report — show summary panel
+                  <RestoredSummaryPanel
+                    report={{
+                      risk_level:          tabSim.report.risk_summary?.risk_level || '',
+                      churn_rate:          tabSim.report.risk_summary?.churn_rate ?? 0,
+                      visit_rate:          tabSim.report.risk_summary?.visit_rate ?? 0,
+                      estimated_revenue:   tabSim.report.risk_summary?.estimated_revenue ?? 0,
+                      total_agents:        tabSim.report.risk_summary?.total_agents ?? 0,
+                      archetype_breakdown: tabSim.report.archetype_breakdown || {},
+                      recommendations:     tabSim.report.recommendations || [],
+                      analysis:            tabSim.report.analysis || '',
+                    }}
+                    description={''}
+                  />
+                ) : (
+                  <InfluenceGraph
+                    agents={displayAgents}
+                    influences={displayInfluences}
+                    highlightedAgentId={highlightedAgentId}
+                    onClearHighlight={() => setHighlightedAgentId(null)}
+                  />
+                )}
+                {displayFeed.length > 0 && (
+                  <ActivityFeed items={displayFeed} onAgentClick={setHighlightedAgentId} highlightedAgentId={highlightedAgentId} />
+                )}
               </div>
             </div>
-          )}
+            )
+          })()}
         </main>
       </div>
 
@@ -359,5 +506,108 @@ function CtrlBtn({ onClick, title, children }: { onClick: () => void; title?: st
     >
       {children}
     </button>
+  )
+}
+
+function RestoredSummaryPanel({ report, description }: { report: SimReport; description: string }) {
+  const RISK_COLOUR: Record<string, string> = {
+    Low:    '#22c55e',
+    Medium: '#f59e0b',
+    High:   '#ef4444',
+  }
+  const riskColor = RISK_COLOUR[report.risk_level] || 'var(--gray-500)'
+
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', gap: '1rem',
+      padding: '1.25rem', overflowY: 'auto',
+      background: 'var(--white)', borderRadius: 10,
+      border: '1px solid var(--gray-200)',
+    }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+        <svg style={{ width: 20, height: 20, color: 'var(--accent)', flexShrink: 0 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+        </svg>
+        <span style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--gray-900)' }}>
+          Simulation Completed
+        </span>
+        <span style={{
+          marginLeft: 'auto', padding: '0.2rem 0.65rem', borderRadius: 999,
+          fontSize: '0.72rem', fontWeight: 700,
+          background: `${riskColor}1a`, color: riskColor, border: `1px solid ${riskColor}55`,
+        }}>
+          {report.risk_level} Risk
+        </span>
+      </div>
+
+      {description && (
+        <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--gray-600)', lineHeight: 1.5 }}>
+          {description}
+        </p>
+      )}
+
+      {/* Summary stats — visit and churn rates only (revenue shown in metric cards above) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.6rem' }}>
+        <StatBox label="Visit Rate"  value={`${report.visit_rate.toFixed(1)}%`}  color="#22c55e" />
+        <StatBox label="Churn Rate"  value={`${report.churn_rate.toFixed(1)}%`}  color="#ef4444" />
+      </div>
+
+      {/* Archetype breakdown */}
+      {Object.keys(report.archetype_breakdown).length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+          <p style={{ margin: 0, fontSize: '0.72rem', fontWeight: 700, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Customer Breakdown
+          </p>
+          {Object.entries(report.archetype_breakdown).map(([label, data]) => (
+            <div key={label} style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--gray-700)' }}>
+                <span style={{ fontWeight: 600 }}>{label}</span>
+                <span style={{ color: 'var(--gray-500)' }}>
+                  {data.visit_pct}% visit · {data.skip_pct}% skip · {data.churn_pct}% churn
+                </span>
+              </div>
+              <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', background: 'var(--gray-100)' }}>
+                <div style={{ width: `${data.visit_pct}%`, background: '#22c55e' }} />
+                <div style={{ width: `${data.skip_pct}%`, background: '#eab308' }} />
+                <div style={{ width: `${data.churn_pct}%`, background: '#ef4444' }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Recommendations */}
+      {report.recommendations.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+          <p style={{ margin: 0, fontSize: '0.72rem', fontWeight: 700, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Recommendations
+          </p>
+          <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+            {report.recommendations.map((rec, i) => (
+              <li key={i} style={{ fontSize: '0.8rem', color: 'var(--gray-700)', lineHeight: 1.5 }}>
+                {rec.replace(/\*\*/g, '')}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function StatBox({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div style={{
+      padding: '0.6rem 0.75rem', borderRadius: 8,
+      border: '1px solid var(--gray-200)', background: 'var(--gray-50)',
+    }}>
+      <div style={{ fontSize: '0.68rem', color: 'var(--gray-500)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.2rem' }}>
+        {label}
+      </div>
+      <div style={{ fontSize: '1.15rem', fontWeight: 800, color, fontFamily: 'var(--font-display)' }}>
+        {value}
+      </div>
+    </div>
   )
 }

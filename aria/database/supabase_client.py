@@ -640,6 +640,7 @@ class SupabaseClient:
                 'agent_count': sim.get('agent_count', 0),
                 'completed_at': raw_ts,
                 'report': report,
+                'session_id': (scenario.get('parameters') or {}).get('_session_id'),
             })
         
         return history
@@ -734,3 +735,17 @@ class SupabaseClient:
                     row = result[0] if isinstance(result, list) else result
                     return row.get("session_id")
                 return None
+
+    async def list_chat_messages(self, session_id: str) -> List[Dict[str, Any]]:
+        """Retrieve all messages for a chat session, ordered by creation time."""
+        url = f"{self.base_url}/rest/v1/chat_messages"
+        params = {
+            "session_id": f"eq.{session_id}",
+            "select": "role,content,message_metadata,created_at",
+            "order": "created_at.asc",
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, headers=self.headers) as response:
+                if response.status == 200:
+                    return await response.json()
+                return []

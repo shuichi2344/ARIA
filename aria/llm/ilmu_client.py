@@ -141,7 +141,7 @@ class IlmuClient:
         temperature: float,
         max_tokens: Optional[int],
     ) -> Dict[str, Any]:
-        """Internal method with retry logic."""
+        """Internal method with retry logic. Non-retryable errors (4xx billing/auth) fail immediately."""
         last_error = None
 
         for attempt in range(self.max_retries):
@@ -149,6 +149,14 @@ class IlmuClient:
                 return await self._do_chat(messages, temperature, max_tokens)
             except IlmuError as e:
                 last_error = e
+                # Don't retry billing/auth errors — they won't resolve on their own
+                error_str = str(e)
+                is_permanent = any(
+                    code in error_str for code in ("(401)", "(402)", "(403)", "billing_error", "insufficient_quota")
+                )
+                if is_permanent:
+                    logger.warning(f"Ilmu AI non-retryable error, aborting retries: {e}")
+                    raise e
                 if attempt < self.max_retries - 1:
                     wait = self.retry_delay * (attempt + 1)
                     logger.warning(

@@ -732,6 +732,17 @@ async def save_chat_message(body: ChatMessageSave):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/chat/session/{session_id}/messages")
+async def get_chat_messages(session_id: str):
+    """Retrieve all messages for a chat session."""
+    try:
+        supabase = SupabaseClient()
+        messages = await supabase.list_chat_messages(session_id)
+        return {"messages": messages}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
@@ -783,6 +794,7 @@ class ScenarioSuggestRequest(BaseModel):
     user_question: str = Field(..., min_length=1, max_length=1000)
     business_profile: Dict[str, Any]
     use_external_context: bool = Field(default=False)
+    chat_session_id: Optional[str] = Field(None, max_length=100)
 
     @field_validator("user_question")
     @classmethod
@@ -794,6 +806,7 @@ class SimulationStartRequest(BaseModel):
     model_config = {"extra": "forbid"}
     user_id: str = Field(..., min_length=1, max_length=100)
     profile_id: Optional[str] = Field(None, max_length=100)
+    chat_session_id: Optional[str] = Field(None, max_length=100)
     scenario: Dict[str, Any]
     duration_weeks: int = Field(default=4, ge=1, le=12)
     agent_count: int = Field(default=25, ge=15, le=100)
@@ -812,11 +825,20 @@ async def suggest_scenarios(request: Request, body: ScenarioSuggestRequest):
     """
     try:
         agent = ScenarioSuggestionAgent()
-        
+
+        # Fetch active Spark for the session (if chat_session_id provided)
+        active_spark = None
+        if body.chat_session_id:
+            from aria.sparks.spark_manager import SparkManager
+            supabase = SupabaseClient()
+            spark_manager = SparkManager(supabase)
+            active_spark = await spark_manager.get_active_spark(body.chat_session_id)
+
         result = await agent.analyze_question(
             business_profile=body.business_profile,
             user_question=body.user_question,
-            use_external_context=body.use_external_context
+            use_external_context=body.use_external_context,
+            active_spark=active_spark,    # NEW
         )
         
         logger.info(f"Scenario analysis complete - {len(result.get('scenarios', []))} scenarios generated")
@@ -866,6 +888,21 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
                 print(f"[INFO] Loaded business profile: {profile['business_name']}")
                 print(f"[INFO] Price range: RM{profile['price_range_min']:.2f} - RM{profile['price_range_max']:.2f}")
         
+        # Fetch active Spark for this session
+        active_spark = None
+        if body.chat_session_id:
+            from aria.sparks.spark_manager import SparkManager as _SparkManager
+            from aria.sparks.spark_templates import SPARK_TEMPLATES as _SPARK_TEMPLATES
+            from aria.sparks.spark_context_injector import SparkContextInjector as _SparkContextInjector
+            _spark_client = supabase_client if body.profile_id else SupabaseClient()
+            _sm = _SparkManager(_spark_client)
+            active_spark = await _sm.get_active_spark(body.chat_session_id)
+
+        spark_section = ""
+        if active_spark is not None:
+            _template = _SPARK_TEMPLATES.get(active_spark.template_id)
+            spark_section = _SparkContextInjector.build_spark_section(active_spark, _template)
+
         # Fallback: use business_profile from scenario if DB fetch didn't populate profile
         if not profile:
             profile = body.scenario.get("business_profile") or {}
@@ -931,6 +968,7 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
                 "scenario":       body.scenario,
                 "business_profile": business_profile_dict,
                 "profile_id":     body.profile_id,
+                "chat_session_id": body.chat_session_id,
                 "agents":         agents,
                 "duration_weeks": 1,
                 "current_week":   0,
@@ -940,6 +978,8 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
                 "target_customer_constraints": target_customer_constraints,
                 "b2b_percentage": body.b2b_percentage,
                 "agents_cached":  True,  # Flag: skip LLM profile generation
+                "active_spark":   active_spark,
+                "spark_section":  spark_section,
             }
 
             asyncio.create_task(_run_simulation(sim_id))
@@ -1176,6 +1216,7 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
             "scenario":       body.scenario,
             "business_profile": business_profile_dict,
             "profile_id":     body.profile_id,
+            "chat_session_id": body.chat_session_id,
             "agents":         agents,
             "duration_weeks": 1,
             "current_week":   0,
@@ -1186,6 +1227,8 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
             "b2b_percentage": body.b2b_percentage,
             "agents_cached":  False,
             "cache_key":      cache_key,  # For caching after LLM profiles are generated
+            "active_spark":   active_spark,
+            "spark_section":  spark_section,
         }
 
         # Kick off background simulation task
@@ -1377,6 +1420,7 @@ async def _run_simulation(sim_id: str):
     scenario = sim["scenario"]
     business_profile = sim.get("business_profile", {})
     customer_type = business_profile.get("customer_type", "B2C")
+    spark_section = sim.get("spark_section", "")
 
     def _is_aborted() -> bool:
         return _active_sims.get(sim_id, {}).get("status") == "aborted"
@@ -1600,7 +1644,8 @@ async def _run_simulation(sim_id: str):
     scenario_context = {
         'scenario_type': scenario_type,
         'description': scenario.get('description', ''),
-        'parameters': params
+        'parameters': params,
+        'spark_section': spark_section,
     }
 
     # Lookup dict: unique_id → agent dict (avoids index-based access)
@@ -2078,13 +2123,17 @@ Message: [15-20 word message explaining your choice after hearing from friends]"
         profile_id = sim.get("profile_id")
         
         if profile_id:
-            # Save scenario
+            # Save scenario — include session_id in parameters for later retrieval
+            scenario_params = dict(params)
+            if sim.get("chat_session_id"):
+                scenario_params["_session_id"] = sim["chat_session_id"]
+
             saved_scenario = await supabase.save_scenario(
                 business_profile_id=profile_id,
                 scenario_name=scenario.get('scenario_name', 'Simulation'),
                 scenario_type=scenario_type,
                 description=scenario.get('description', ''),
-                parameters=params,
+                parameters=scenario_params,
             )
             scenario_db_id = saved_scenario.get('scenario_id')
             
@@ -2375,6 +2424,122 @@ def _calc_spend(agent: Dict, price_change: float, business_profile: Optional[Dic
     # Fallback: income-based estimate
     base = {"B40": 12, "M40": 25, "T20": 45}.get(agent.get("income_level", "M40"), 20)
     return round(base * (1 + price_change) * random.uniform(0.8, 1.2), 2)
+
+
+# ---------------------------------------------------------------------------
+# Spark endpoints
+# ---------------------------------------------------------------------------
+
+import dataclasses
+
+from aria.sparks.spark_manager import (
+    SparkManager,
+    SparkRecord,
+    SparkCreateRequest,
+    SparkAnswerRequest,
+    SparkActivateRequest,
+    SparkUpdateRequest,
+    QAState,
+)
+from aria.sparks.spark_qa_engine import SparkQAEngine
+
+
+@app.get("/api/sparks/templates")
+@limiter.limit(GENERAL_RATE_LIMIT)
+async def get_spark_templates(request: Request):
+    """List all three Spark templates with their questions."""
+    supabase = SupabaseClient()
+    manager = SparkManager(supabase)
+    templates = await manager.get_templates()
+    return {"templates": [dataclasses.asdict(t) for t in templates]}
+
+
+@app.get("/api/sparks")
+@limiter.limit(GENERAL_RATE_LIMIT)
+async def list_sparks(request: Request, user_id: str):
+    """List all Sparks for a user, ordered by updated_at DESC."""
+    supabase = SupabaseClient()
+    manager = SparkManager(supabase)
+    sparks = await manager.list_sparks(user_id)
+    return {"sparks": [s.model_dump() for s in sparks]}
+
+
+@app.post("/api/sparks", response_model=SparkRecord)
+@limiter.limit(GENERAL_RATE_LIMIT)
+async def create_spark(request: Request, body: SparkCreateRequest):
+    """Create a new draft Spark."""
+    supabase = SupabaseClient()
+    manager = SparkManager(supabase)
+    spark = await manager.create_spark(
+        user_id=body.user_id,
+        template_id=body.template_id,
+        name=body.name,
+    )
+    return spark
+
+
+@app.get("/api/sparks/{spark_id}", response_model=SparkRecord)
+@limiter.limit(GENERAL_RATE_LIMIT)
+async def get_spark(request: Request, spark_id: str, user_id: str):
+    """Get a Spark by ID (owner check enforced)."""
+    validate_uuid(spark_id, "spark_id")
+    supabase = SupabaseClient()
+    manager = SparkManager(supabase)
+    return await manager.get_spark(spark_id, user_id)
+
+
+@app.patch("/api/sparks/{spark_id}", response_model=SparkRecord)
+@limiter.limit(GENERAL_RATE_LIMIT)
+async def update_spark(request: Request, spark_id: str, body: SparkUpdateRequest):
+    """Update a Spark's name or individual answers."""
+    validate_uuid(spark_id, "spark_id")
+    supabase = SupabaseClient()
+    manager = SparkManager(supabase)
+    return await manager.update_spark(spark_id, body.user_id, body)
+
+
+@app.delete("/api/sparks/{spark_id}")
+@limiter.limit(GENERAL_RATE_LIMIT)
+async def delete_spark(request: Request, spark_id: str, user_id: str):
+    """Permanently delete a Spark."""
+    validate_uuid(spark_id, "spark_id")
+    supabase = SupabaseClient()
+    manager = SparkManager(supabase)
+    await manager.delete_spark(spark_id, user_id)
+    return {"status": "deleted"}
+
+
+@app.post("/api/sparks/{spark_id}/answer")
+@limiter.limit(GENERAL_RATE_LIMIT)
+async def submit_spark_answer(request: Request, spark_id: str, body: SparkAnswerRequest):
+    """Submit an answer during Q&A flow. Returns QAState."""
+    validate_uuid(spark_id, "spark_id")
+    supabase = SupabaseClient()
+    manager = SparkManager(supabase)
+    engine = SparkQAEngine(manager)
+    qa_state = await engine.process_answer(spark_id, body.user_id, body.answer_text)
+    return qa_state.model_dump()
+
+
+@app.post("/api/sparks/{spark_id}/activate")
+@limiter.limit(GENERAL_RATE_LIMIT)
+async def activate_spark(request: Request, spark_id: str, body: SparkActivateRequest):
+    """Activate a completed Spark for a chat session."""
+    validate_uuid(spark_id, "spark_id")
+    supabase = SupabaseClient()
+    manager = SparkManager(supabase)
+    await manager.activate_spark(spark_id, body.session_id, body.user_id)
+    return {"status": "activated", "spark_id": spark_id, "session_id": body.session_id}
+
+
+@app.post("/api/session/{session_id}/spark/deactivate")
+@limiter.limit(GENERAL_RATE_LIMIT)
+async def deactivate_spark(request: Request, session_id: str, user_id: str):
+    """Remove the active Spark from a chat session."""
+    supabase = SupabaseClient()
+    manager = SparkManager(supabase)
+    await manager.deactivate_spark(session_id)
+    return {"status": "deactivated"}
 
 
 if __name__ == "__main__":

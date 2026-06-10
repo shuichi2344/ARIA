@@ -5,6 +5,10 @@ import type { Scenario, BusinessProfile } from './types'
 import { jsPDF } from 'jspdf'
 import SimulationSettings from './SimulationSettings'
 import type { SimulationSettingsState } from './SimulationSettings'
+import { SIMULATION_MODES } from './SimulationSettings'
+import { api } from '@/lib/api'
+import SparkPicker from './SparkPicker'
+import type { SparkRecord, SparkQAMode } from './types'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
@@ -79,7 +83,7 @@ let msgId = 0
 
 interface Props {
   profile: BusinessProfile | null
-  onLaunch: (scenario: Scenario, agentCount?: number, options?: { income_constraints?: string[] | null; age_constraints?: string[] | null; target_customer_constraints?: string[] | null; business_size_constraints?: string[] | null; b2b_percentage?: number | null }) => void
+  onLaunch: (scenario: Scenario, agentCount?: number, options?: { income_constraints?: string[] | null; age_constraints?: string[] | null; target_customer_constraints?: string[] | null; business_size_constraints?: string[] | null; b2b_percentage?: number | null; chat_session_id?: string | null }) => void
   onSimulationComplete?: (summary: string) => void
   simulationStatus?: 'idle' | 'running' | 'paused' | 'done'
 }
@@ -121,13 +125,27 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
   const [hasStartedConversation, setHasStartedConversation] = useState(false)
   const [pendingTemplate, setPendingTemplate] = useState<TemplateScenario | null>(null)
   const [inputPromptValue, setInputPromptValue] = useState('')
-  const [agentCount, setAgentCount] = useState(25)
+  const [fallbackMode, setFallbackMode] = useState<import('@/components/dashboard/SimulationSettings').SimulationMode>('balanced')
   const [simulationSettings, setSimulationSettings] = useState<SimulationSettingsState | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [lastFailedQuery, setLastFailedQuery] = useState<string | null>(null)
+  const [simulationRanInSession, setSimulationRanInSession] = useState(false)
   const feedRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const latestReportRef = useRef<any>(null)
+
+  // Spark Q&A state
+  const [sparkQAMode, setSparkQAMode] = useState<SparkQAMode>('idle')
+  const [sparkQASparkId, setSparkQASparkId] = useState<string | null>(null)
+  const [sparkQATotalQuestions, setSparkQATotalQuestions] = useState(0)
+  const [sparkQACurrentIndex, setSparkQACurrentIndex] = useState(0)
+
+  // Spark management state
+  const [activeSpark, setActiveSpark] = useState<SparkRecord | null>(null)
+  const [savedSparks, setSavedSparks] = useState<SparkRecord[]>([])
+
+  // userId helper ref — avoids re-reading localStorage on every render
+  const userIdRef = useRef<string>('')
 
   const handleSettingsChange = useCallback((settings: SimulationSettingsState) => {
     setSimulationSettings(prev => {
@@ -144,13 +162,32 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
       }
       return settings
     })
-    setAgentCount(settings.agentCount)
   }, [])
 
-  // Keep agentCount in sync with settings passed from parent
+  // Populate userIdRef on mount
   useEffect(() => {
-    if (simulationSettings) setAgentCount(simulationSettings.agentCount)
-  }, [simulationSettings])
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem('aria_session') : null
+      if (raw) userIdRef.current = JSON.parse(raw).id || ''
+    } catch {}
+  }, [])
+
+  // Fetch saved sparks on mount (when userId available)
+  useEffect(() => {
+    const fetchSparks = async () => {
+      const userId = userIdRef.current
+      if (!userId) return
+      try {
+        const result = await api.fetchSparks(userId)
+        setSavedSparks(result.sparks || [])
+      } catch {
+        // Silently fail — sparks are optional
+      }
+    }
+    // Small delay to let userIdRef populate
+    const timer = setTimeout(fetchSparks, 100)
+    return () => clearTimeout(timer)
+  }, [])
 
   // Event delegation for PDF download button — survives re-renders and tab switches
   useEffect(() => {
@@ -294,8 +331,56 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
       setPendingTemplate(null)
       setInput('')
       setLoading(false)
+      setLastFailedQuery(null)
+      setSimulationRanInSession(false)
     }
-    return () => { delete (window as any).__ariaNewChat }
+
+    ;(window as any).__ariaRestoreMessages = (savedMessages: Array<{ role: string; content: string; metadata?: any }>) => {
+      if (!savedMessages || savedMessages.length === 0) return
+      const restored: Message[] = savedMessages.map(m => {
+        // Report messages were saved with metadata.report — rebuild the rich HTML card
+        if (m.role === 'aria' && m.metadata?.report) {
+          const report = m.metadata.report
+          const risk = report.risk_summary
+          if (risk) {
+            const breakdown = report.archetype_breakdown || {}
+            const recs = report.recommendations || []
+            const reportHtml = `<div style="display:flex;flex-direction:column;gap:0.75rem;">
+              <div style="font-weight:700;font-size:0.95rem;">📊 Simulation Report</div>
+              <div style="background:${risk.risk_level === 'High' ? '#fef2f2' : risk.risk_level === 'Medium' ? '#fffbeb' : '#f0fdf4'};padding:0.6rem;border-radius:6px;border:1px solid ${risk.risk_level === 'High' ? '#fecaca' : risk.risk_level === 'Medium' ? '#fde68a' : '#bbf7d0'};">
+                <div style="font-weight:600;margin-bottom:0.3rem;">Risk Level: ${risk.risk_level}</div>
+                <div style="font-size:0.8rem;">• Churn rate: ${risk.churn_rate}%</div>
+                <div style="font-size:0.8rem;">• Visit rate: ${risk.visit_rate}%</div>
+                <div style="font-size:0.8rem;">• Est. revenue: RM${Number(risk.estimated_revenue).toFixed(2)}</div>
+              </div>
+              <div>
+                <div style="font-weight:600;margin-bottom:0.3rem;">${report.breakdown_type === 'personality' ? 'Personality Breakdown:' : 'Customer Breakdown:'}</div>
+                ${Object.entries(breakdown).map(([level, data]: [string, any]) =>
+                  `<div style="font-size:0.8rem;">• ${level}: ${data.visit_pct}% visit, ${data.skip_pct}% skip, ${data.churn_pct}% churn</div>`
+                ).join('')}
+              </div>
+              ${recs.length > 0 ? `<div><div style="font-weight:600;margin-bottom:0.5rem;">Recommendations:</div>${recs.map((r: string) => `<div style="font-size:0.8rem;margin-bottom:0.5rem;padding-left:0.5rem;border-left:2px solid var(--accent);">${r.replace(/\*\*/g, '')}</div>`).join('')}</div>` : ''}
+              <button id="download-report-btn" style="margin-top:0.5rem;padding:0.4rem 0.75rem;border-radius:6px;background:var(--accent);color:#fff;border:none;font-size:0.78rem;font-weight:600;cursor:pointer;">📄 Download PDF</button>
+            </div>`
+            // Store in ref so PDF download works
+            latestReportRef.current = report
+            return { id: msgId++, role: 'aria' as const, text: reportHtml }
+          }
+        }
+        return {
+          id: msgId++,
+          role: (m.role === 'user' ? 'user' : 'aria') as 'user' | 'aria',
+          text: m.content,
+        }
+      })
+      setMessages(restored)
+      setHasStartedConversation(true)
+    }
+
+    return () => {
+      delete (window as any).__ariaNewChat
+      delete (window as any).__ariaRestoreMessages
+    }
   }, [])
 
   // Expose a method to add completion message with report
@@ -351,6 +436,9 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
           
           // Store report in ref for the event delegation handler
           latestReportRef.current = report
+          
+          // Mark that a simulation has been completed in this chat session
+          setSimulationRanInSession(true)
         } else {
           setMessages(p => [...p, {
             id: msgId++,
@@ -372,6 +460,49 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
     const text = input.trim()
     if (!text || loading || simulationStatus === 'running' || simulationStatus === 'paused') return
     
+    // If Spark Q&A is in progress, intercept and route to answer endpoint
+    if (sparkQAMode === 'answering' && sparkQASparkId) {
+      setInput('')
+      setMessages(p => [...p, { id: msgId++, role: 'user', text }])
+      setLoading(true)
+      setMessages(p => [...p, { id: msgId++, role: 'typing' }])
+      const userId = userIdRef.current
+      try {
+        const qaState = await api.submitSparkAnswer(sparkQASparkId, {
+          user_id: userId,
+          question_id: '', // Backend determines current question internally
+          answer_text: text,
+        })
+
+        setMessages(p => p.filter(m => m.role !== 'typing'))
+
+        if (qaState.status === 'completed') {
+          setSparkQAMode('complete')
+          setMessages(p => [...p, { id: msgId++, role: 'aria', text: qaState.aria_message }])
+
+          // Update the spark in savedSparks to status=completed
+          setSavedSparks(prev => prev.map(s =>
+            s.spark_id === sparkQASparkId
+              ? { ...s, status: 'completed' as const }
+              : s
+          ))
+        } else if (qaState.validation_error) {
+          setMessages(p => [...p, { id: msgId++, role: 'aria', text: qaState.aria_message }])
+        } else {
+          setSparkQACurrentIndex(qaState.current_question_index)
+          setMessages(p => [...p, { id: msgId++, role: 'aria', text: qaState.aria_message }])
+        }
+      } catch {
+        setMessages(p => [
+          ...p.filter(m => m.role !== 'typing'),
+          { id: msgId++, role: 'aria', text: "Sorry, I couldn't save that answer. Please try again." },
+        ])
+      } finally {
+        setLoading(false)
+      }
+      return // Don't proceed to /api/simulation/suggest
+    }
+
     // Abort any pending request
     if (abortRef.current) abortRef.current.abort()
     const controller = new AbortController()
@@ -398,6 +529,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
           user_question:    text,
           business_profile: profile || { business_name: 'Unknown', business_type: 'Unknown' },
           use_external_context: useRealWorldContext,
+          chat_session_id: chatSessionRef.current,
         }),
         signal: controller.signal,
       })
@@ -462,6 +594,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
           user_question: text,
           business_profile: profile || { business_name: 'Unknown', business_type: 'Unknown' },
           use_external_context: useRealWorldContext,
+          chat_session_id: chatSessionRef.current,
         }),
         signal: controller.signal,
       })
@@ -560,7 +693,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
     setMessages(p => [...p, { 
       id: msgId++, 
       role: 'aria', 
-      text: `Starting simulation for "${s.scenario_name}" with ${agentCount} customers...`,
+      text: `Starting simulation for "${s.scenario_name}"…`,
       hint: s.description
     }])
     
@@ -594,13 +727,86 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
       : null
     
     setScenarios([])
-    onLaunch(scenarioWithProfile, agentCount, {
+    const resolvedAgentCount = simulationSettings?.agentCount ?? SIMULATION_MODES[fallbackMode].agentCount
+    onLaunch(scenarioWithProfile, resolvedAgentCount, {
       income_constraints: incomeConstraints,
       age_constraints: ageConstraints,
       target_customer_constraints: targetCustomerConstraints,
       business_size_constraints: businessSizeConstraints,
       b2b_percentage: simulationSettings?.b2bPercentage ?? null,
+      chat_session_id: chatSessionRef.current,
     })
+  }
+
+  // Handler: user selects a template to start Q&A
+  const handleSelectTemplate = async (templateId: string) => {
+    const userId = userIdRef.current
+    if (!userId) return
+    try {
+      const spark = await api.createSpark({ user_id: userId, template_id: templateId })
+
+      // Fetch templates to get the first question text
+      const templatesResult = await api.fetchSparkTemplates()
+      const template = templatesResult.templates.find(t => t.id === templateId)
+      if (!template) return
+
+      const firstQuestion = template.questions[0]
+
+      // Set Q&A state
+      setSparkQASparkId(spark.spark_id)
+      setSparkQAMode('answering')
+      setSparkQATotalQuestions(template.questions.length)
+      setSparkQACurrentIndex(0)
+
+      // Append ARIA message with first question
+      setMessages(p => [...p, {
+        id: msgId++,
+        role: 'aria',
+        text: `Question 1 of ${template.questions.length}: ${firstQuestion.text}`,
+      }])
+
+      // Update saved sparks list
+      setSavedSparks(prev => [spark, ...prev])
+    } catch {
+      setMessages(p => [...p, {
+        id: msgId++, role: 'aria',
+        text: "Sorry, I couldn't start the Spark Q&A. Please try again.",
+      }])
+    }
+  }
+
+  // Handler: activate a spark for this session
+  const handleActivateSpark = async (sparkId: string) => {
+    const userId = userIdRef.current
+    if (!userId || !chatSessionRef.current) return
+    try {
+      await api.activateSpark(sparkId, { user_id: userId, session_id: chatSessionRef.current })
+      const spark = savedSparks.find(s => s.spark_id === sparkId) || null
+      setActiveSpark(spark)
+    } catch {
+      // Silently fail or show toast
+    }
+  }
+
+  // Handler: deactivate the active spark
+  const handleDeactivateSpark = async () => {
+    const userId = userIdRef.current
+    if (!userId || !chatSessionRef.current) return
+    try {
+      await api.deactivateSpark(chatSessionRef.current, userId)
+      setActiveSpark(null)
+    } catch {}
+  }
+
+  // Handler: delete a spark
+  const handleDeleteSpark = async (sparkId: string) => {
+    const userId = userIdRef.current
+    if (!userId) return
+    try {
+      await api.deleteSpark(sparkId, userId)
+      setSavedSparks(prev => prev.filter(s => s.spark_id !== sparkId))
+      if (activeSpark?.spark_id === sparkId) setActiveSpark(null)
+    } catch {}
   }
 
   return (
@@ -731,6 +937,19 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
         )}
       </div>
 
+      {/* Spark Picker — above message area */}
+      <SparkPicker
+        userId={userIdRef.current}
+        sessionId={chatSessionRef.current}
+        activeSpark={activeSpark}
+        savedSparks={savedSparks}
+        simulationStatus={simulationStatus}
+        onSelectTemplate={handleSelectTemplate}
+        onActivateSpark={handleActivateSpark}
+        onDeactivateSpark={handleDeactivateSpark}
+        onDeleteSpark={handleDeleteSpark}
+      />
+
       {/* Messages */}
       <div ref={feedRef} style={{
         flex: 1, overflowY: 'auto', padding: '1rem',
@@ -839,7 +1058,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
       )}
 
       {/* Scenario chips — scrollable, capped height so messages stay visible */}
-      {scenarios.length > 0 && (simulationStatus === 'idle' || simulationStatus === 'done') && (
+      {scenarios.length > 0 && !simulationRanInSession && (simulationStatus === 'idle' || simulationStatus === 'done') && (
         <div style={{
           padding: '0.75rem 1rem',
           borderTop: '1px solid var(--gray-100)',
@@ -861,6 +1080,47 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
         </div>
       )}
 
+      {/* One simulation per chat: show prompt to start new chat after sim completes */}
+      {simulationRanInSession && simulationStatus !== 'running' && simulationStatus !== 'paused' ? (
+        <div style={{
+          padding: '1rem',
+          borderTop: '1px solid var(--gray-200)',
+          display: 'flex', flexDirection: 'column', gap: '0.75rem',
+          flexShrink: 0,
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'flex-start', gap: '0.6rem',
+            background: 'var(--gray-50)', borderRadius: 8,
+            border: '1px solid var(--gray-200)',
+            padding: '0.75rem',
+          }}>
+            <span style={{ fontSize: '1rem', flexShrink: 0 }}>💡</span>
+            <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--gray-700)', lineHeight: 1.5 }}>
+              Each chat supports one simulation scenario. Start a new chat to run a different scenario.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => (window as any).__ariaNewChat?.()}
+            style={{
+              padding: '0.6rem 1rem', borderRadius: 8,
+              background: 'var(--accent)', color: '#fff',
+              border: 'none', fontWeight: 600, fontSize: '0.85rem',
+              cursor: 'pointer', width: '100%',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
+              transition: 'opacity 0.15s',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.opacity = '0.85')}
+            onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
+          >
+            <svg style={{ width: 15, height: 15 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            Start New Chat
+          </button>
+        </div>
+      ) : (
+      <>
       {/* Input */}
       <form onSubmit={send} style={{
         display: 'flex', flexDirection: 'column', gap: '0.75rem',
@@ -870,29 +1130,36 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
         {/* Template Scenarios Carousel - only show before any interaction and when no input prompt is active */}
         {!hasStartedConversation && !pendingTemplate && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {/* Agent count — shown as a compact row when no district profile */}
+            {/* Simulation mode — shown as compact buttons when no district profile */}
             {(!profile || !profile.district) && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
               <label style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                Customers
+                Simulation Mode
               </label>
-              <input
-                type="number"
-                min={15}
-                max={100}
-                value={agentCount}
-                onChange={e => setAgentCount(Math.max(15, Math.min(100, parseInt(e.target.value) || 25)))}
-                style={{
-                  width: 56, padding: '0.25rem 0.4rem', borderRadius: 4,
-                  border: '1px solid var(--gray-300)', fontSize: '0.8rem',
-                  textAlign: 'center',
-                }}
-              />
-              {agentCount > 50 && (
-                <span style={{ fontSize: '0.68rem', color: '#f59e0b' }}>
-                  ⚠️ High count — may be slow
-                </span>
-              )}
+              <div style={{ display: 'flex', gap: '0.4rem' }}>
+                {(Object.entries(SIMULATION_MODES) as [import('@/components/dashboard/SimulationSettings').SimulationMode, typeof SIMULATION_MODES[keyof typeof SIMULATION_MODES]][]).map(([mode, config]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setFallbackMode(mode)}
+                    title={config.description}
+                    style={{
+                      flex: 1, padding: '0.4rem 0.4rem', fontSize: '0.75rem',
+                      fontWeight: fallbackMode === mode ? 700 : 500,
+                      borderRadius: 6,
+                      border: `1.5px solid ${fallbackMode === mode ? config.colorBorder : '#e5e7eb'}`,
+                      background: fallbackMode === mode ? config.colorLight : 'white',
+                      color: fallbackMode === mode ? config.colorText : 'var(--gray-500)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {config.label}
+                  </button>
+                ))}
+              </div>
+              <p style={{ margin: 0, fontSize: '0.68rem', color: 'var(--gray-400)', fontStyle: 'italic' }}>
+                {SIMULATION_MODES[fallbackMode].description} · {SIMULATION_MODES[fallbackMode].agentCount} agents
+              </p>
             </div>
             )}
 
@@ -1076,6 +1343,8 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
           </button>
         </div>
       </form>
+      </>
+      )}
 
       <style>{`
         @keyframes typing-bounce {

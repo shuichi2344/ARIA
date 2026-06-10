@@ -195,9 +195,9 @@ export default function SimulationSettings({ district, disabled, onSettingsChang
               fontSize: '0.75rem', color: 'var(--gray-700)',
               cursor: disabled ? 'not-allowed' : 'pointer',
               opacity: targetCustomerConstraints.includes(item) ? 1 : 0.5,
-              background: targetCustomerConstraints.includes(item) ? 'var(--accent-light, #e0f2fe)' : 'transparent',
+              background: 'transparent',
               padding: '0.15rem 0.4rem', borderRadius: 4,
-              border: '1px solid var(--gray-200)',
+              border: `1px solid ${targetCustomerConstraints.includes(item) ? 'var(--accent)' : 'var(--gray-200)'}`,
             }}>
               <input
                 type="checkbox"

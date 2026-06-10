@@ -1,14 +1,12 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import type { Scenario, BusinessProfile } from './types'
+import type { Scenario, BusinessProfile, SparkRecord, SparkQAMode, SparkTemplate } from './types'
 import { jsPDF } from 'jspdf'
 import SimulationSettings from './SimulationSettings'
 import type { SimulationSettingsState } from './SimulationSettings'
 import { SIMULATION_MODES } from './SimulationSettings'
 import { api } from '@/lib/api'
-import SparkPicker from './SparkPicker'
-import type { SparkRecord, SparkQAMode } from './types'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
@@ -875,13 +873,131 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
               </button>
             </div>
             {/* Drawer content */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
               <SimulationSettings
                 district={profile.district}
                 disabled={simulationStatus === 'running' || simulationStatus === 'paused'}
                 onSettingsChange={handleSettingsChange}
                 customerProfile={profile.customer_profile as Record<string, unknown> | undefined}
               />
+
+              {/* ── Context Sparks ── */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                {/* Section header */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <svg style={{ width: 14, height: 14, color: 'var(--accent)', flexShrink: 0 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                  </svg>
+                  <p style={{ margin: 0, fontSize: '0.7rem', fontWeight: 700, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Context Sparks
+                  </p>
+                </div>
+                <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--gray-500)', lineHeight: 1.5 }}>
+                  Add real context about your business to make simulations more accurate. Select a spark to see what it covers, then decide whether to add it.
+                </p>
+
+                {/* Saved sparks */}
+                {savedSparks.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                    {savedSparks.map(spark => {
+                      const isActive = activeSpark?.spark_id === spark.spark_id
+                      const isDisabled = simulationStatus === 'running' || simulationStatus === 'paused'
+                      return (
+                        <div
+                          key={spark.spark_id}
+                          style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            padding: '0.5rem 0.65rem',
+                            borderRadius: 6,
+                            border: `1.5px solid ${isActive ? 'var(--accent)' : 'var(--gray-200)'}`,
+                            background: 'transparent',
+                          }}
+                        >
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem', flex: 1, minWidth: 0 }}>
+                            <span style={{
+                              fontSize: '0.78rem', fontWeight: isActive ? 700 : 600,
+                              color: isActive ? 'var(--accent)' : 'var(--gray-800)',
+                              display: 'flex', alignItems: 'center', gap: '0.35rem',
+                            }}>
+                              {isActive && (
+                                <span style={{
+                                  display: 'inline-block', width: 6, height: 6,
+                                  borderRadius: '50%', background: 'var(--accent)', flexShrink: 0,
+                                }} />
+                              )}
+                              {spark.name}
+                            </span>
+                            <span style={{ fontSize: '0.68rem', color: 'var(--gray-400)', textTransform: 'capitalize' }}>
+                              {spark.status === 'completed' ? 'Ready' : spark.status === 'in_progress' ? 'In progress' : 'Draft'}
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', gap: '0.3rem', flexShrink: 0 }}>
+                            {isActive ? (
+                              <button
+                                onClick={() => !isDisabled && handleDeactivateSpark()}
+                                disabled={isDisabled}
+                                title="Deactivate spark"
+                                style={{
+                                  padding: '0.2rem 0.5rem', borderRadius: 4, fontSize: '0.7rem',
+                                  fontWeight: 600, border: '1px solid var(--accent)',
+                                  background: 'transparent', color: 'var(--accent)',
+                                  cursor: isDisabled ? 'not-allowed' : 'pointer',
+                                  opacity: isDisabled ? 0.5 : 1,
+                                }}
+                              >
+                                Deactivate
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => !isDisabled && handleActivateSpark(spark.spark_id)}
+                                disabled={isDisabled}
+                                title="Activate spark"
+                                style={{
+                                  padding: '0.2rem 0.5rem', borderRadius: 4, fontSize: '0.7rem',
+                                  fontWeight: 600, border: '1px solid var(--gray-300)',
+                                  background: 'white', color: 'var(--gray-700)',
+                                  cursor: isDisabled ? 'not-allowed' : 'pointer',
+                                  opacity: isDisabled ? 0.5 : 1,
+                                }}
+                              >
+                                Activate
+                              </button>
+                            )}
+                            <button
+                              onClick={() => !isDisabled && handleDeleteSpark(spark.spark_id)}
+                              disabled={isDisabled}
+                              title="Delete spark"
+                              style={{
+                                width: 26, height: 26, borderRadius: 4,
+                                border: '1px solid var(--gray-200)', background: 'white',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                cursor: isDisabled ? 'not-allowed' : 'pointer',
+                                opacity: isDisabled ? 0.5 : 1, color: 'var(--gray-400)',
+                              }}
+                              aria-label="Delete spark"
+                            >
+                              <svg style={{ width: 12, height: 12 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+                                <path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/>
+                              </svg>
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {/* Template cards — show what each spark is about before committing */}
+                <SparkTemplateCards
+                  existingSparkTemplateIds={savedSparks.map(s => s.template_id)}
+                  disabled={simulationStatus === 'running' || simulationStatus === 'paused'}
+                  onConfirm={templateId => {
+                    setSettingsOpen(false)
+                    handleSelectTemplate(templateId)
+                  }}
+                />
+              </div>
             </div>
           </div>
         </>
@@ -936,19 +1052,6 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
           </button>
         )}
       </div>
-
-      {/* Spark Picker — above message area */}
-      <SparkPicker
-        userId={userIdRef.current}
-        sessionId={chatSessionRef.current}
-        activeSpark={activeSpark}
-        savedSparks={savedSparks}
-        simulationStatus={simulationStatus}
-        onSelectTemplate={handleSelectTemplate}
-        onActivateSpark={handleActivateSpark}
-        onDeactivateSpark={handleDeactivateSpark}
-        onDeleteSpark={handleDeleteSpark}
-      />
 
       {/* Messages */}
       <div ref={feedRef} style={{
@@ -1455,5 +1558,146 @@ function ScenarioChip({ scenario, onClick }: { scenario: Scenario; onClick: () =
         )}
       </span>
     </button>
+  )
+}
+
+// ── SparkTemplateCards ────────────────────────────────────────────────────────
+// Shown inside the Settings drawer. Fetches templates, lets the user read about
+// each one, then confirms before starting the Q&A flow in the chat.
+
+interface SparkTemplateCardsProps {
+  existingSparkTemplateIds: string[]
+  disabled: boolean
+  onConfirm: (templateId: string) => void
+}
+
+function SparkTemplateCards({ existingSparkTemplateIds, disabled, onConfirm }: SparkTemplateCardsProps) {
+  const [templates, setTemplates] = useState<SparkTemplate[]>([])
+  const [loadError, setLoadError] = useState(false)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+
+  useEffect(() => {
+    api.fetchSparkTemplates()
+      .then(r => setTemplates(r.templates || []))
+      .catch(() => setLoadError(true))
+  }, [])
+
+  // Filter out templates the user already has a spark for
+  const available = templates.filter(t => !existingSparkTemplateIds.includes(t.id))
+
+  if (loadError) return (
+    <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--gray-400)', fontStyle: 'italic' }}>
+      Could not load spark templates.
+    </p>
+  )
+
+  if (available.length === 0 && existingSparkTemplateIds.length > 0) return (
+    <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--gray-400)', fontStyle: 'italic' }}>
+      All available context sparks have been added.
+    </p>
+  )
+
+  if (available.length === 0) return null
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+      {available.map(template => {
+        const isExpanded = expandedId === template.id
+        return (
+          <div
+            key={template.id}
+            style={{
+              borderRadius: 8,
+              border: `1.5px solid ${isExpanded ? 'var(--accent)' : 'var(--gray-200)'}`,
+              background: 'transparent',
+              overflow: 'hidden',
+              transition: 'border-color 0.15s',
+            }}
+          >
+            {/* Template row — click to expand */}
+            <button
+              type="button"
+              onClick={() => setExpandedId(isExpanded ? null : template.id)}
+              disabled={disabled}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '0.6rem 0.75rem',
+                background: 'none', border: 'none',
+                cursor: disabled ? 'not-allowed' : 'pointer',
+                textAlign: 'left', opacity: disabled ? 0.5 : 1,
+              }}
+            >
+              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--gray-800)' }}>
+                {template.name}
+              </span>
+              <svg
+                style={{
+                  width: 14, height: 14, color: 'var(--gray-400)', flexShrink: 0,
+                  transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                  transition: 'transform 0.15s',
+                }}
+                viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+              >
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </button>
+
+            {/* Expanded detail + confirm */}
+            {isExpanded && (
+              <div style={{ padding: '0 0.75rem 0.75rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--gray-600)', lineHeight: 1.5 }}>
+                  {template.description}
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                  <p style={{ margin: 0, fontSize: '0.68rem', fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Questions ({template.questions.length})
+                  </p>
+                  {template.questions.map((q, i) => (
+                    <div key={q.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'flex-start' }}>
+                      <span style={{
+                        fontSize: '0.68rem', fontWeight: 700, color: 'var(--accent)',
+                        minWidth: '1rem', flexShrink: 0, marginTop: '0.1rem',
+                      }}>
+                        {i + 1}.
+                      </span>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--gray-700)', lineHeight: 1.4 }}>
+                        {q.label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.2rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => { setExpandedId(null); onConfirm(template.id) }}
+                    style={{
+                      flex: 1, padding: '0.45rem 0.75rem', borderRadius: 6,
+                      background: 'var(--accent)', color: '#fff',
+                      border: 'none', fontWeight: 600, fontSize: '0.78rem',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Add this Spark
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedId(null)}
+                    style={{
+                      padding: '0.45rem 0.65rem', borderRadius: 6,
+                      background: 'white', color: 'var(--gray-600)',
+                      border: '1px solid var(--gray-300)', fontSize: '0.78rem',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
   )
 }

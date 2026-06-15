@@ -17,7 +17,6 @@ class ARIAModel(mesa.Model):
         self,
         scenario: Dict[str, Any],
         archetypes: List[Dict[str, Any]],
-        duration_weeks: int,
         agent_count: int = 15,
         business_profile: Dict[str, Any] = None
     ):
@@ -27,7 +26,6 @@ class ARIAModel(mesa.Model):
         Args:
             scenario: Scenario parameters
             archetypes: List of customer archetypes
-            duration_weeks: Simulation duration in weeks
             agent_count: Number of agents to create
             business_profile: Business profile with location and pricing context
         """
@@ -35,7 +33,6 @@ class ARIAModel(mesa.Model):
         
         self.scenario = scenario
         self.archetypes = archetypes
-        self.duration_weeks = duration_weeks
         self.agent_count = agent_count
         self.business_profile = business_profile  # Store for agent access
         
@@ -159,8 +156,6 @@ class ARIAModel(mesa.Model):
         """
         return {
             "current_week": self.current_week,
-            "total_weeks": self.duration_weeks,
-            "progress_percent": (self.current_week / self.duration_weeks * 100) if self.duration_weeks > 0 else 0,
             "total_visits": self.count_visits(),
             "total_revenue": self.calculate_revenue(),
             "active_agents": self.count_active_agents(),

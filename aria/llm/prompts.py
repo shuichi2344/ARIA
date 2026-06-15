@@ -160,7 +160,7 @@ EXAMPLE FOR "How will fuel prices affect my business?":
       "scenario_name": "Customers Reduce Visits Due to Fuel Costs",
       "scenario_type": "economic_shock",
       "description": "Fuel prices increased 10%. B40 customers (40% of your area) reduce dining out by 20% to save money. M40 customers reduce by 10%.",
-      "parameters": {"price_change_percent": 0, "b40_visit_reduction_percent": 20, "m40_visit_reduction_percent": 10, "duration_weeks": 4},
+      "parameters": {"price_change_percent": 0, "b40_visit_reduction_percent": 20, "m40_visit_reduction_percent": 10},
       "relevance_score": 95,
       "expected_impact": "15-20% reduction in total visits, especially from B40 customers"
     },
@@ -193,7 +193,7 @@ EXAMPLE FOR "What happens if I open a new branch in Bayan Lepas?":
       "scenario_name": "Introductory Discount at New Branch",
       "scenario_type": "branch_expansion_with_promotion",
       "description": "New branch opens with a 15% introductory discount for the first month. Customers weigh the savings against the effort of trying a new place.",
-      "parameters": {"price_change_percent": -15, "new_location": true, "promotion_duration_weeks": 4},
+      "parameters": {"price_change_percent": -15, "new_location": true},
       "relevance_score": 88,
       "expected_impact": "Higher initial footfall from price-sensitive B40/M40 customers; test if they return after discount ends"
     }

@@ -63,7 +63,6 @@ All request body models now enforce:
 | `b2b_percentage` | Integer 0–100 |
 | `price_range_min/max` | Float 0–1,000,000 |
 | `agent_count` | Integer 15–100 |
-| `duration_weeks` | Integer 1–12 |
 | `password` | Min 6 chars, max 128 chars (strength validated separately) |
 
 ### Sanitization Utilities (`aria/api/security.py`)

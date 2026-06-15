@@ -808,7 +808,6 @@ class SimulationStartRequest(BaseModel):
     profile_id: Optional[str] = Field(None, max_length=100)
     chat_session_id: Optional[str] = Field(None, max_length=100)
     scenario: Dict[str, Any]
-    duration_weeks: int = Field(default=4, ge=1, le=12)
     agent_count: int = Field(default=25, ge=15, le=100)
     income_constraints: Optional[List[str]] = None
     age_constraints: Optional[List[str]] = None
@@ -970,7 +969,6 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
                 "profile_id":     body.profile_id,
                 "chat_session_id": body.chat_session_id,
                 "agents":         agents,
-                "duration_weeks": 1,
                 "current_week":   0,
                 "is_paused":      False,
                 "status":         "running",
@@ -986,7 +984,6 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
 
             return {
                 "simulation_id": sim_id,
-                "duration_weeks": 1,
                 "agent_count": len(agents),
                 "agents": agents,
             }
@@ -996,7 +993,6 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
         print("="*80)
         print(f"Simulation ID: {sim_id}")
         print(f"Agent Count: {body.agent_count}")
-        print(f"Duration: {body.duration_weeks} weeks")
         print(f"Scenario: {body.scenario.get('scenario_type', 'unknown')}")
         if customer_type == "B2B":
             print(f"B2B Constraints:")
@@ -1218,7 +1214,6 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
             "profile_id":     body.profile_id,
             "chat_session_id": body.chat_session_id,
             "agents":         agents,
-            "duration_weeks": 1,
             "current_week":   0,
             "is_paused":      False,
             "status":         "running",
@@ -1236,7 +1231,6 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
 
         return {
             "simulation_id": sim_id,
-            "duration_weeks": 1,
             "agent_count": len(agents),
             "agents": agents,
         }
@@ -1563,7 +1557,6 @@ async def _run_simulation(sim_id: str):
     mesa_model = ARIAModel(
         scenario=scenario,
         archetypes=[],  # Not needed — agents are pre-built
-        duration_weeks=1,
         agent_count=len(agents),
         business_profile=business_profile
     )

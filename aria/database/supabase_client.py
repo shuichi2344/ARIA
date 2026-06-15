@@ -490,7 +490,6 @@ class SupabaseClient:
             "scenario_type": scenario_type,
             "description": description,
             "parameters": parameters,
-            "duration_weeks": 1,
         }
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=data, headers=self.headers) as response:
@@ -515,7 +514,6 @@ class SupabaseClient:
             "scenario_id": scenario_id,
             "status": status,
             "current_week": 1,
-            "duration_weeks": 1,
             "agent_count": agent_count,
             "progress_percentage": 100.0,
             "started_at": started_at or now,

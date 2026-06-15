@@ -63,7 +63,6 @@ export function useSim(sessionId: string, profileId?: string) {
   const [agents,        setAgents]        = useState<Agent[]>([])
   const [metrics,       setMetrics]       = useState<WeekSummary | null>(null)
   const [currentWeek,   setCurrentWeek]   = useState(0)
-  const [totalWeeks,    setTotalWeeks]    = useState(4)
   const [isPaused,      setIsPaused]      = useState(false)
   const [feed,          setFeed]          = useState<FeedItem[]>([])
   const [scenarioName,  setScenarioName]  = useState('')
@@ -94,7 +93,6 @@ export function useSim(sessionId: string, profileId?: string) {
   const agentsRef     = useRef<Agent[]>([])
   const influencesRef = useRef<InfluenceEdge[]>([])
   const metricsRef    = useRef<WeekSummary | null>(null)
-  const totalWeeksRef = useRef(4)
   const scenarioNameRef = useRef('')
   const scenarioTypeRef = useRef('')
 
@@ -175,7 +173,6 @@ export function useSim(sessionId: string, profileId?: string) {
           user_id:        sessionId,
           profile_id:     profileId,
           scenario,
-          duration_weeks: 4,
           agent_count:    agentCount,
           income_constraints: options?.income_constraints ?? null,
           age_constraints:    options?.age_constraints ?? null,
@@ -191,13 +188,11 @@ export function useSim(sessionId: string, profileId?: string) {
       }
       const data = await res.json()
       simIdRef.current = data.simulation_id
-      setTotalWeeks(data.duration_weeks || 4)
       setCurrentWeek(0)
       setIsPaused(false)
       if (data.agents) { setAgents(data.agents); agentsRef.current = data.agents }
       setInfluences([]); influencesRef.current = []
       setMetrics(null);  metricsRef.current = null
-      totalWeeksRef.current = data.duration_weeks || 4
 
       // SSE stream
       const es = new EventSource(`${API_BASE}/api/simulation/${data.simulation_id}/stream`)
@@ -328,7 +323,6 @@ export function useSim(sessionId: string, profileId?: string) {
     setStatus('done')
     setScenarioName(snap.scenarioName)
     setScenarioType(snap.scenarioType)
-    setTotalWeeks(snap.totalWeeks)
     setCurrentWeek(snap.totalWeeks)
     setMetrics(snap.finalMetrics)
     setAgents(snap.agents)
@@ -363,7 +357,6 @@ export function useSim(sessionId: string, profileId?: string) {
     setAgents([])
     setMetrics(null)
     setCurrentWeek(0)
-    setTotalWeeks(4)
     setIsPaused(false)
     setFeed([])
     setScenarioName('')
@@ -377,13 +370,12 @@ export function useSim(sessionId: string, profileId?: string) {
     agentsRef.current = []
     influencesRef.current = []
     metricsRef.current = null
-    totalWeeksRef.current = 4
     scenarioNameRef.current = ''
     scenarioTypeRef.current = ''
   }, [])
 
   return {
-    status, agents, metrics, currentWeek, totalWeeks,
+    status, agents, metrics, currentWeek,
     isPaused, feed, scenarioName, influences,
     history, restoreSnapshot, deleteSnapshot,
     launch, togglePause, reset,

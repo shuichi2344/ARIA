@@ -499,8 +499,7 @@ class ScenarioSuggestionAgent:
         scenario_name: str,
         scenario_type: str,
         parameters: Dict[str, Any],
-        description: str,
-        duration_weeks: int = 4
+        description: str
     ) -> int:
         """
         Create and save a scenario to database.
@@ -511,7 +510,6 @@ class ScenarioSuggestionAgent:
             scenario_type: Scenario type
             parameters: Scenario parameters
             description: Scenario description
-            duration_weeks: Duration in weeks (default: 4)
         
         Returns:
             Created scenario ID
@@ -523,8 +521,7 @@ class ScenarioSuggestionAgent:
                 scenario_name=scenario_name,
                 scenario_type=scenario_type,
                 parameters=parameters,
-                description=description,
-                duration_weeks=duration_weeks
+                description=description
             )
             
             return scenario.id

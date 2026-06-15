@@ -56,7 +56,7 @@ export default function DashboardPage({ session }: Props) {
         ;(window as any).__ariaAddCompletionMessage(summary)
       }
     }
-  }, [sim.status, sim.metrics, sim.totalWeeks])
+  }, [sim.status, sim.metrics])
 
   function handleLogout() {
     logout()

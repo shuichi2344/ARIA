@@ -7,7 +7,6 @@ The LLM serves as the 'brain' of customer agents, generating:
 """
 
 import re
-import asyncio
 from aria.llm.llm_client import LLMClient
 from typing import Dict, List, Optional
 

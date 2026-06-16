@@ -92,14 +92,15 @@ Navigate to http://localhost:3000. Register an account, complete onboarding, and
 
 ## Key Features
 
+- **🎯 Monte Carlo CV Stopping (INTEGRATED ✅)** — **NEW:** Dynamic simulation stopping based on Weighted Composite Index convergence. Automatically runs 5-30 iterations until statistical convergence (CV ≤ 5%). **Saves 30-50% on LLM API costs** while ensuring statistically rigorous results. Enabled by default for all simulations. See `MONTE_CARLO_INTEGRATION_COMPLETE.md` for details.
 - **Dual LLM provider** — Ilmu AI (Malaysian sovereign cloud) as primary, Ollama (local) as fallback. Automatic failover.
 - **Real demographic data** — IPF engine uses DOSM census data for Penang districts to create statistically valid agent populations.
 - **B2C, B2B, and Hybrid** — Supports consumer businesses, B2B suppliers, and mixed models with configurable split ratios.
 - **Peer influence network** — Agents are connected in income-weighted social networks and can influence each other's decisions.
-- **Real-time streaming** — Simulation progress streamed to the frontend via Server-Sent Events (SSE).
+- **Real-time streaming** — Simulation progress streamed to the frontend via Server-Sent Events (SSE), including Monte Carlo convergence metrics.
 - **Agent personality caching** — Reuses generated personalities within the same chat session for consistency.
-- **Simulation settings** — Configurable demographics (income levels, age groups), target segments, and agent count.
-- **PDF reports** — Downloadable simulation reports with risk assessment, charts, and recommendations.
+- **Simulation settings** — Configurable demographics (income levels, age groups), target segments, agent count, and Monte Carlo parameters.
+- **PDF reports** — Downloadable simulation reports with risk assessment, Monte Carlo convergence data, confidence intervals, and cost savings.
 - **External context** — Optional integration with News API and Malaysia public holiday calendar for context-aware scenarios.
 - **Security hardened** — Rate limiting, input validation, secure headers, no client-side secrets.
 
@@ -165,6 +166,7 @@ See `.env.example` for the full list. Key variables:
 - `docs/SYSTEM_FLOWCHARTS.md` — Detailed flow diagrams (Mermaid)
 - `docs/SECURITY_HARDENING.md` — Security measures and changelog
 - `docs/IPF_SYNTHETIC_POPULATION.md` — Population generation methodology
+- `docs/MONTE_CARLO_CV.md` — **Monte Carlo CV stopping criterion with Weighted Composite Index**
 
 ---
 

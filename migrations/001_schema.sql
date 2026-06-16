@@ -86,6 +86,7 @@ CREATE TABLE public.simulation_reports (
   archetype_breakdown jsonb NOT NULL,
   recommendations jsonb NOT NULL,
   analysis text,
+  monte_carlo_summary jsonb DEFAULT NULL,
   created_at timestamp without time zone DEFAULT now(),
   CONSTRAINT simulation_reports_pkey PRIMARY KEY (report_id),
   CONSTRAINT reports_simulation_fk FOREIGN KEY (simulation_id) REFERENCES public.simulations(simulation_id)
@@ -98,6 +99,9 @@ CREATE TABLE public.simulations (
   current_week integer DEFAULT 0,
   agent_count integer NOT NULL,
   progress_percentage double precision DEFAULT 0.0,
+  monte_carlo_enabled boolean DEFAULT false,
+  monte_carlo_total_runs integer DEFAULT 1,
+  monte_carlo_converged boolean DEFAULT NULL,
   started_at timestamp without time zone,
   completed_at timestamp without time zone,
   error_message text,
@@ -140,3 +144,6 @@ CREATE TABLE public.sparks (
 );
 
 CREATE INDEX sparks_user_updated_idx ON public.sparks (user_id, updated_at DESC);
+
+-- Index for filtering Monte Carlo simulations
+CREATE INDEX simulations_monte_carlo_idx ON public.simulations(monte_carlo_enabled, monte_carlo_converged);

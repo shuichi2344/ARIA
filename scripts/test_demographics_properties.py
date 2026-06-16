@@ -7,7 +7,6 @@ Property 7: Demographics endpoint returns valid distributions
 Validates: Requirements 6.1, 6.2, 6.4
 """
 
-import pytest
 from hypothesis import given, settings, HealthCheck
 from hypothesis.strategies import sampled_from, text, characters
 from fastapi.testclient import TestClient

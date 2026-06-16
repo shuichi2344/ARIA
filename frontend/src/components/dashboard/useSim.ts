@@ -9,6 +9,16 @@ let feedCounter = 0
 // Sentinel ID for the "live" tab (currently running simulation)
 export const LIVE_TAB_ID = '__live__'
 
+export interface MonteCarloState {
+  current_run: number
+  max_runs: number
+  min_runs: number
+  cv_threshold: number
+  wci_cv: number
+  converged: boolean
+  completed: boolean
+}
+
 export interface CompletedSim {
   id: string           // simulation_id from backend
   scenarioName: string
@@ -42,6 +52,27 @@ function mapHistoryItem(h: any): SimSnapshot {
     churned_agents: r.churn_rate != null ? Math.round((r.churn_rate / 100) * agentCount) : 0,
   } : null
 
+  // Reconstruct agents from saved events (backend now provides this)
+  const agents: Agent[] = (h.agents || []).map((a: any) => ({
+    agent_id:       a.agent_id,
+    persona_name:   a.persona_name || `Customer ${a.agent_id}`,
+    income_level:   a.income_level || 'M40',
+    age_range:      a.age_range || '',
+    is_active:      a.is_active ?? (a.last_decision !== 'churn'),
+    last_decision:  a.last_decision ?? null,
+    reasoning:      a.reasoning ?? null,
+    personality:    a.personality || '',
+    personality_type: a.personality_type || '',
+  }))
+
+  // Reconstruct activity feed from saved events (backend now provides this)
+  const feed: FeedItem[] = (h.feed || []).map((f: any, idx: number) => ({
+    id:      f.id ?? idx,
+    type:    f.type as FeedItem['type'],
+    html:    f.html || '',
+    agentId: f.agentId ?? f.agent_id,
+  }))
+
   return {
     id:           h.simulation_id,
     scenarioName: h.scenario_name,
@@ -52,9 +83,9 @@ function mapHistoryItem(h: any): SimSnapshot {
     finalMetrics,
     report,
     sessionId:    h.session_id || null,
-    agents:       [],
-    feed:         [],
-    influences:   [],
+    agents,
+    feed,
+    influences:   [],  // not persisted — peer influence edges are ephemeral
   }
 }
 
@@ -66,11 +97,14 @@ export function useSim(sessionId: string, profileId?: string) {
   const [isPaused,      setIsPaused]      = useState(false)
   const [feed,          setFeed]          = useState<FeedItem[]>([])
   const [scenarioName,  setScenarioName]  = useState('')
-  const [scenarioType,  setScenarioType]  = useState('')
   const [influences,    setInfluences]    = useState<InfluenceEdge[]>([])
   const [history,       setHistory]       = useState<SimSnapshot[]>([])
   const [restoredReport, setRestoredReport] = useState<SimReport | null>(null)
   const [restoredDescription, setRestoredDescription] = useState<string>('')
+  const [isRestoredFromHistory, setIsRestoredFromHistory] = useState(false)
+
+  // Monte Carlo state
+  const [monteCarloState, setMonteCarloState] = useState<MonteCarloState | null>(null)
 
   // In-session completed simulations — drives the tab bar
   const [completedSims, setCompletedSims] = useState<CompletedSim[]>([])
@@ -156,11 +190,12 @@ export function useSim(sessionId: string, profileId?: string) {
     metricsRef.current = null
     setRestoredReport(null)
     setRestoredDescription('')
+    setIsRestoredFromHistory(false)
     setActiveTabId(LIVE_TAB_ID)
+    setMonteCarloState(null)
 
     setStatus('running')
     setScenarioName(scenario.scenario_name)
-    setScenarioType(scenario.scenario_type)
     scenarioNameRef.current = scenario.scenario_name
     scenarioTypeRef.current = scenario.scenario_type
     addFeed('system', `Starting simulation: "${scenario.scenario_name}" with ${agentCount} agents…`)
@@ -197,7 +232,6 @@ export function useSim(sessionId: string, profileId?: string) {
       // SSE stream
       const es = new EventSource(`${API_BASE}/api/simulation/${data.simulation_id}/stream`)
       esRef.current = es
-      const thisSimId = data.simulation_id  // Capture for closure
 
       es.addEventListener('week_start', e => {
         const d = JSON.parse((e as MessageEvent).data)
@@ -255,6 +289,53 @@ export function useSim(sessionId: string, profileId?: string) {
         setMetrics(d); metricsRef.current = d
         setCurrentWeek(d.week)
       })
+
+      // Monte Carlo events
+      es.addEventListener('monte_carlo_start', e => {
+        const d = JSON.parse((e as MessageEvent).data)
+        setMonteCarloState({
+          current_run: 0,
+          max_runs: d.max_runs,
+          min_runs: d.min_runs,
+          cv_threshold: d.cv_threshold,
+          wci_cv: 0,
+          converged: false,
+          completed: false,
+        })
+        addFeed('system', `🔁 <strong>Running multiple times for accuracy</strong> — running this scenario ${d.min_runs}-${d.max_runs} times to make sure results are reliable`)
+      })
+
+      es.addEventListener('monte_carlo_run_start', e => {
+        const d = JSON.parse((e as MessageEvent).data)
+        setMonteCarloState(prev => prev ? { ...prev, current_run: d.run_number } : prev)
+        addFeed('system', `<span style="font-weight:700;color:var(--accent)">━━━ Run ${d.run_number} of ${d.max_runs} ━━━</span>`)
+      })
+
+      es.addEventListener('monte_carlo_progress', e => {
+        const d = JSON.parse((e as MessageEvent).data)
+        setMonteCarloState(prev => prev ? {
+          ...prev,
+          current_run: d.run_number,
+          wci_cv: d.wci_cv,
+          converged: d.converged,
+        } : prev)
+      })
+
+      es.addEventListener('monte_carlo_complete', e => {
+        const d = JSON.parse((e as MessageEvent).data)
+        setMonteCarloState(prev => prev ? {
+          ...prev,
+          completed: true,
+          converged: d.converged,
+          current_run: d.total_runs,
+          wci_cv: d.wci_cv,
+        } : prev)
+        addFeed('system', d.converged
+          ? `✅ <strong>Results are reliable</strong> — got consistent outcomes after ${d.total_runs} runs`
+          : `⚠️ <strong>Results may vary</strong> — completed ${d.total_runs} runs but outcomes weren't fully consistent`
+        )
+      })
+
       es.addEventListener('simulation_complete', e => {
         const d = JSON.parse((e as MessageEvent).data)
         setStatus('done')
@@ -319,10 +400,18 @@ export function useSim(sessionId: string, profileId?: string) {
   }, [isPaused])
 
   const restoreSnapshot = useCallback((snap: SimSnapshot) => {
-    if (esRef.current) { esRef.current.close(); esRef.current = null }
-    setStatus('done')
+    // If a simulation is currently running, DON'T close the SSE or destroy live state.
+    // Instead, just overlay the history view. The live sim continues in the background.
+    const isRunning = status === 'running' || status === 'paused'
+    
+    if (!isRunning) {
+      // No active sim — safe to fully replace state
+      if (esRef.current) { esRef.current.close(); esRef.current = null }
+      setStatus('done')
+    }
+    
+    // Store the viewed snapshot for display (this overlays the live sim panel)
     setScenarioName(snap.scenarioName)
-    setScenarioType(snap.scenarioType)
     setCurrentWeek(snap.totalWeeks)
     setMetrics(snap.finalMetrics)
     setAgents(snap.agents)
@@ -331,13 +420,15 @@ export function useSim(sessionId: string, profileId?: string) {
     setIsPaused(false)
     setRestoredReport(snap.report)
     setRestoredDescription(snap.description || '')
+    setIsRestoredFromHistory(true)
     setCompletedSims([])
     setActiveTabId(null)
+    setMonteCarloState(null)
     agentsRef.current     = snap.agents
     feedRef.current       = snap.feed
     influencesRef.current = snap.influences
     metricsRef.current    = snap.finalMetrics
-  }, [])
+  }, [status])
 
   const deleteSnapshot = useCallback((id: string) => {
     setHistory(prev => prev.filter(s => s.id !== id))
@@ -360,12 +451,13 @@ export function useSim(sessionId: string, profileId?: string) {
     setIsPaused(false)
     setFeed([])
     setScenarioName('')
-    setScenarioType('')
     setInfluences([])
     setRestoredReport(null)
     setRestoredDescription('')
+    setIsRestoredFromHistory(false)
     setCompletedSims([])
     setActiveTabId(null)
+    setMonteCarloState(null)
     feedRef.current = []
     agentsRef.current = []
     influencesRef.current = []
@@ -374,13 +466,28 @@ export function useSim(sessionId: string, profileId?: string) {
     scenarioTypeRef.current = ''
   }, [])
 
+  // Resume viewing the live/current simulation (after viewing history)
+  const resumeLive = useCallback(() => {
+    setAgents(agentsRef.current)
+    setFeed(feedRef.current)
+    setMetrics(metricsRef.current)
+    setInfluences(influencesRef.current)
+    setScenarioName(scenarioNameRef.current)
+    setRestoredReport(null)
+    setRestoredDescription('')
+    setIsRestoredFromHistory(false)
+    setActiveTabId(LIVE_TAB_ID)
+    setMonteCarloState(prev => prev)  // keep current MC state
+  }, [])
+
   return {
     status, agents, metrics, currentWeek,
     isPaused, feed, scenarioName, influences,
     history, restoreSnapshot, deleteSnapshot,
-    launch, togglePause, reset,
-    restoredReport, restoredDescription,
+    launch, togglePause, reset, resumeLive,
+    restoredReport, restoredDescription, isRestoredFromHistory,
     completedSims, activeTabId, setActiveTabId,
+    monteCarloState,
   }
 }
 

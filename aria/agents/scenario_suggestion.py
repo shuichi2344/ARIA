@@ -1,16 +1,17 @@
-"""
+﻿"""
 Scenario Suggestion Agent for ARIA.
 Analyzes user questions and suggests relevant simulation scenarios.
 Enhanced with real-world context from News API and DOSM economic data.
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from aria.llm import LLMClient, prompts
 from aria.external.news_api import NewsAPIClient
 from aria.external.dosm import DOSMClient
 from aria.external.malaysia_calendar import MalaysiaCalendarClient
 from aria.config import NEWS_API_KEY
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -58,12 +59,12 @@ class ScenarioSuggestionAgent:
         # Build search query from user question
         print(f"User question: '{user_question}'")
         keywords = self._build_search_query(user_question)
-        print(f"✓ Search query: '{keywords}'")
+        print(f"âœ“ Search query: '{keywords}'")
         
         # Gather news context if News API is available
         if self.news_client and keywords:
             try:
-                print(f"→ Searching News API with query: '{keywords}'")
+                print(f"â†’ Searching News API with query: '{keywords}'")
                 
                 # Search for relevant news (English only, Malaysia)
                 news_articles = await self.news_client.search_news(
@@ -72,29 +73,29 @@ class ScenarioSuggestionAgent:
                 )
                 
                 context["news_articles"] = news_articles[:3]  # Keep top 3
-                print(f"✓ News API: Found {len(news_articles)} articles (using top 3)")
+                print(f"âœ“ News API: Found {len(news_articles)} articles (using top 3)")
                 
                 if news_articles:
                     for i, article in enumerate(news_articles[:3], 1):
                         print(f"  {i}. {article['title'][:60]}...")
                 
             except Exception as e:
-                print(f"✗ News API failed: {e}")
-                print("  → Continuing without news context")
+                print(f"âœ— News API failed: {e}")
+                print("  â†’ Continuing without news context")
         else:
             if not self.news_client:
-                print("✗ News API client not initialized (NEWS_API_KEY missing)")
+                print("âœ— News API client not initialized (NEWS_API_KEY missing)")
             else:
-                print("✗ Could not build search query from question")
+                print("âœ— Could not build search query from question")
         
         # Gather DOSM economic indicators
         try:
-            print("→ Loading DOSM economic data")
+            print("â†’ Loading DOSM economic data")
             
             # Get district from business location
             location = business_profile.get("location", "")
             district = self.dosm_client.map_location_to_district(location)
-            print(f"  Mapped location '{location}' → district '{district}'")
+            print(f"  Mapped location '{location}' â†’ district '{district}'")
             
             # Get demographic and economic data
             demographics = await self.dosm_client.get_demographics(district)
@@ -106,7 +107,7 @@ class ScenarioSuggestionAgent:
                 "source": demographics.get("source", "DOSM")
             }
             
-            print(f"✓ DOSM data loaded for district: {district}")
+            print(f"âœ“ DOSM data loaded for district: {district}")
             
             # Log income distribution
             income_dist = demographics.get("income_distribution", {})
@@ -118,18 +119,18 @@ class ScenarioSuggestionAgent:
                     print(f"    {group}: {pct}% (median: RM{median:,})")
             
         except Exception as e:
-            print(f"✗ DOSM data loading failed: {e}")
-            print("  → Continuing without economic indicators")
+            print(f"âœ— DOSM data loading failed: {e}")
+            print("  â†’ Continuing without economic indicators")
         
         # Gather Malaysia holiday context (always available, no API key needed)
         try:
-            print("→ Loading Malaysia holiday data (Pulau Pinang)")
+            print("â†’ Loading Malaysia holiday data (Pulau Pinang)")
             holiday_summary = await self.calendar_client.get_holiday_context_summary()
             context["holiday_context"] = holiday_summary
-            print(f"✓ Holiday context loaded")
+            print(f"âœ“ Holiday context loaded")
         except Exception as e:
-            print(f"✗ Holiday data loading failed: {e}")
-            print("  → Continuing without holiday context")
+            print(f"âœ— Holiday data loading failed: {e}")
+            print("  â†’ Continuing without holiday context")
         
         # Generate context summary
         context["context_summary"] = self._summarize_context(
@@ -137,7 +138,7 @@ class ScenarioSuggestionAgent:
             economic_indicators=context["economic_indicators"]
         )
         
-        print("✓ Context gathering complete")
+        print("âœ“ Context gathering complete")
         print("=" * 60)
         
         return context
@@ -265,7 +266,7 @@ class ScenarioSuggestionAgent:
         business_profile: Dict[str, Any],
         user_question: str,
         use_external_context: bool = False,
-        active_spark=None,  # Optional[SparkRecord] — type hint via string to avoid circular import
+        active_spark=None,  # Optional[SparkRecord] â€” type hint via string to avoid circular import
     ) -> Dict[str, Any]:
         """
         Analyze user's open-ended question and suggest scenarios.
@@ -308,15 +309,15 @@ class ScenarioSuggestionAgent:
             }
             # Load holiday context only if the question is relevant
             if self._is_holiday_relevant(user_question):
-                print("  → Holiday-related question detected, loading calendar data")
+                print("  â†’ Holiday-related question detected, loading calendar data")
                 try:
                     holiday_summary = await self.calendar_client.get_holiday_context_summary()
                     context["holiday_context"] = holiday_summary
-                    print(f"  ✓ Holiday context loaded")
+                    print(f"  âœ“ Holiday context loaded")
                 except Exception as e:
-                    print(f"  ✗ Holiday data unavailable: {e}")
+                    print(f"  âœ— Holiday data unavailable: {e}")
             else:
-                print("  → No holiday keywords detected, skipping calendar API")
+                print("  â†’ No holiday keywords detected, skipping calendar API")
             print("=" * 60)
         
         # STEP 2: Generate custom LLM scenarios
@@ -328,7 +329,7 @@ class ScenarioSuggestionAgent:
         recommended_action = ""
         
         try:
-            print("→ Building LLM prompt with context")
+            print("â†’ Building LLM prompt with context")
 
             # Build Spark context section (lazy import to avoid circular dependency)
             spark_section = ""
@@ -349,7 +350,7 @@ class ScenarioSuggestionAgent:
             )
             
             print(f"  Prompt length: {len(prompt)} characters")
-            print("→ Calling Ollama LLM...")
+            print("â†’ Calling Ollama LLM...")
             
             response = await self.llm_client.generate(
                 prompt=prompt,
@@ -357,26 +358,37 @@ class ScenarioSuggestionAgent:
                 max_tokens=4000
             )
             
-            print(f"✓ LLM response received ({len(response['response'])} characters)")
-            print("→ Parsing LLM response...")
+            print(f"âœ“ LLM response received ({len(response['response'])} characters)")
+            print("â†’ Parsing LLM response...")
             
             # Debug: log first/last 100 chars to help diagnose parse failures
             raw_resp = response["response"]
             print(f"  [debug] Response starts with: {repr(raw_resp[:80])}")
             print(f"  [debug] Response ends with: {repr(raw_resp[-80:])}")
             
-            result = parsers.parse_scenario_suggestions(response["response"])
+            # Parse JSON response directly
+            try:
+                result = json.loads(raw_resp)
+            except json.JSONDecodeError as e:
+                print(f"âœ— JSON parsing failed: {e}")
+                # Try to extract JSON from response if it contains extra text
+                import re
+                json_match = re.search(r'\{.*\}', raw_resp, re.DOTALL)
+                if json_match:
+                    result = json.loads(json_match.group())
+                else:
+                    raise ValueError(f"Could not parse JSON from LLM response: {e}")
             
             scenarios = result.get("scenarios", [])
             analysis = result.get("analysis", "")
             recommended_action = result.get("recommended_action", "")
             
-            print(f"✓ Successfully generated {len(scenarios)} custom scenarios")
+            print(f"âœ“ Successfully generated {len(scenarios)} custom scenarios")
             for i, scenario in enumerate(scenarios, 1):
                 print(f"  {i}. {scenario['scenario_name']} (relevance: {scenario.get('relevance_score', 'N/A')}/100)")
             
-        except (ParsingError, Exception) as e:
-            print(f"✗ LLM scenario generation failed: {e}")
+        except Exception as e:
+            print(f"âœ— LLM scenario generation failed: {e}")
             import traceback
             traceback.print_exc()
             
@@ -391,7 +403,7 @@ class ScenarioSuggestionAgent:
         print("=" * 60)
         print(f"Generated scenarios: {len(scenarios)}")
         print("=" * 60)
-        print("✓ Scenario generation complete\n")
+        print("âœ“ Scenario generation complete\n")
         
         return {
             "analysis": analysis,
@@ -399,160 +411,3 @@ class ScenarioSuggestionAgent:
             "scenarios": scenarios,
             "context": context
         }
-    
-    
-    async def suggest_scenarios(
-        self,
-        business_profile_id: int,
-        user_question: str
-    ) -> Dict[str, Any]:
-        """
-        Suggest scenarios for a business profile based on user question.
-        
-        Args:
-            business_profile_id: Business profile ID
-            user_question: User's question or concern
-        
-        Returns:
-            Dictionary with analysis and suggested scenarios
-        """
-        # Get business profile
-        async with get_session() as session:
-            profile = await repositories.get_business_profile_by_id(
-                session=session,
-                profile_id=business_profile_id
-            )
-            
-            if not profile:
-                return {
-                    "error": "Business profile not found",
-                    "scenarios": []
-                }
-            
-            business_profile = {
-                "business_name": profile.business_name,
-                "business_type": profile.business_type,
-                "location": profile.location,
-                "price_level": profile.price_level,
-                "target_audience": profile.target_audience
-            }
-        
-        # Analyze question and suggest scenarios
-        return await self.analyze_question(business_profile, user_question)
-    
-    def get_predefined_templates(self) -> List[Dict[str, Any]]:
-        """
-        Get predefined scenario templates.
-        Templates that require user input have 'requires_input' field.
-        
-        Returns:
-            List of scenario template dictionaries
-        """
-        return [
-            {
-                "name": "Price Change",
-                "type": "price_change",
-                "description": "Test how customers react to a price change",
-                "parameters": {},
-                "use_case": "Planning to change prices",
-                "requires_input": {
-                    "field": "price_change_percent",
-                    "label": "Price change percentage",
-                    "type": "number",
-                    "placeholder": "e.g. 10 for increase, -10 for decrease",
-                    "hint": "Positive = increase, Negative = decrease"
-                }
-            },
-            {
-                "name": "Demand Surge",
-                "type": "demand_surge",
-                "description": "Simulate a sudden spike in customer demand",
-                "parameters": {},
-                "use_case": "Expecting a holiday rush or viral moment",
-                "requires_input": {
-                    "field": "demand_increase_percent",
-                    "label": "Demand increase percentage",
-                    "type": "number",
-                    "placeholder": "e.g. 50",
-                    "hint": "How much extra demand you expect (e.g. 50 = 50% more customers)"
-                }
-            },
-            {
-                "name": "Extended Operating Hours",
-                "type": "operating_hours_change",
-                "description": "Test impact of extending your operating hours",
-                "parameters": {},
-                "use_case": "Considering staying open longer",
-                "requires_input": {
-                    "field": "hours_extension",
-                    "label": "How many extra hours per day?",
-                    "type": "number",
-                    "placeholder": "e.g. 2",
-                    "hint": "Number of additional hours you plan to stay open"
-                }
-            },
-        ]
-    
-    async def create_scenario(
-        self,
-        business_profile_id: int,
-        scenario_name: str,
-        scenario_type: str,
-        parameters: Dict[str, Any],
-        description: str
-    ) -> int:
-        """
-        Create and save a scenario to database.
-        
-        Args:
-            business_profile_id: Business profile ID
-            scenario_name: Scenario name
-            scenario_type: Scenario type
-            parameters: Scenario parameters
-            description: Scenario description
-        
-        Returns:
-            Created scenario ID
-        """
-        async with get_session() as session:
-            scenario = await repositories.create_scenario(
-                session=session,
-                business_profile_id=business_profile_id,
-                scenario_name=scenario_name,
-                scenario_type=scenario_type,
-                parameters=parameters,
-                description=description
-            )
-            
-            return scenario.id
-    
-    async def get_scenarios(
-        self,
-        business_profile_id: int
-    ) -> List[Dict[str, Any]]:
-        """
-        Get all scenarios for a business profile.
-        
-        Args:
-            business_profile_id: Business profile ID
-        
-        Returns:
-            List of scenario dictionaries
-        """
-        async with get_session() as session:
-            scenarios = await repositories.get_scenarios_by_business_profile(
-                session=session,
-                business_profile_id=business_profile_id
-            )
-            
-            return [
-                {
-                    "id": s.id,
-                    "scenario_name": s.scenario_name,
-                    "scenario_type": s.scenario_type,
-                    "parameters": s.parameters,
-                    "description": s.description,
-                    "created_at": s.created_at.isoformat()
-                }
-                for s in scenarios
-            ]

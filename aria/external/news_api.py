@@ -8,7 +8,6 @@ Uses newsdata.io to gather real-time economic news.
 import aiohttp
 import asyncio
 from typing import List, Dict, Any, Optional
-from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)

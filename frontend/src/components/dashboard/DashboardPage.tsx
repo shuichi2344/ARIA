@@ -9,7 +9,7 @@ import ActivityFeed from './ActivityFeed'
 import InfluenceGraph from './InfluenceGraph'
 import HistorySidebar from './HistorySidebar'
 import { useSim, LIVE_TAB_ID } from './useSim'
-import type { CompletedSim } from './useSim'
+import type { MonteCarloState } from './useSim'
 import { useSession } from '@/context/SessionContext'
 import type { AriaSession, BusinessProfile, SimReport } from './types'
 
@@ -47,26 +47,17 @@ export default function DashboardPage({ session }: Props) {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [highlightedAgentId, setHighlightedAgentId] = useState<number | null>(null)
 
-  // Notify chat when simulation completes
-  useEffect(() => {
-    if (sim.status === 'done' && sim.metrics) {
-      // Call the global callback to add completion message to chat
-      if ((window as any).__ariaAddCompletionMessage) {
-        const summary = `Simulation complete. ${sim.metrics.active_agents} customers still active, ${sim.metrics.churned_agents} churned.`
-        ;(window as any).__ariaAddCompletionMessage(summary)
-      }
-    }
-  }, [sim.status, sim.metrics])
-
   function handleLogout() {
     logout()
     router.push('/')
   }
 
+  // Fallback for old simulations that have no saved session_id:
+  // inject the report card directly into chat so something is visible
   function injectRestoredReport(snap: typeof sim.history[0]) {
-    if (!snap.report) return
+    if (!snap.report || !(window as any).__ariaAddCompletionMessage) return
     const r = snap.report
-    const wrappedReport = {
+    ;(window as any).__ariaAddCompletionMessage(`Restored: "${snap.scenarioName}"`, {
       risk_summary: {
         risk_level:        r.risk_level,
         churn_rate:        r.churn_rate,
@@ -80,10 +71,7 @@ export default function DashboardPage({ session }: Props) {
       analysis:            r.analysis || '',
       disclaimer:          "Revenue is estimated from your business price range, adjusted by the scenario's price change.",
       scenario:            { name: snap.scenarioName, description: snap.description },
-    }
-    if ((window as any).__ariaAddCompletionMessage) {
-      ;(window as any).__ariaAddCompletionMessage(`Restored: "${snap.scenarioName}"`, wrappedReport)
-    }
+    })
   }
 
   // Progress based on how many agents have made decisions
@@ -100,32 +88,38 @@ export default function DashboardPage({ session }: Props) {
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
         history={sim.history}
+        currentSimName={sim.scenarioName || undefined}
+        currentSimStatus={sim.status !== 'idle' ? sim.status : undefined}
+        onGoToCurrent={() => {
+          // Resume viewing the live/current simulation
+          sim.resumeLive()
+        }}
         onRestore={snap => {
           sim.restoreSnapshot(snap)
-          if ((window as any).__ariaNewChat) (window as any).__ariaNewChat()
 
-          if (snap.sessionId) {
-            // Fetch saved chat messages for this session and restore them
-            let userId = ''
-            try { const raw = localStorage.getItem('aria_session'); if (raw) userId = JSON.parse(raw).id || '' } catch {}
-            fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'}/api/chat/session/${snap.sessionId}/messages`)
-              .then(r => r.ok ? r.json() : { messages: [] })
-              .then(data => {
-                if (data.messages?.length > 0 && (window as any).__ariaRestoreMessages) {
-                  ;(window as any).__ariaRestoreMessages(data.messages)
-                } else if ((window as any).__ariaAddCompletionMessage && snap.report) {
-                  // Fallback: inject just the report card if no messages found
-                  setTimeout(() => injectRestoredReport(snap), 50)
-                }
-              })
-              .catch(() => {
-                if ((window as any).__ariaAddCompletionMessage && snap.report) {
-                  setTimeout(() => injectRestoredReport(snap), 50)
-                }
-              })
-          } else if ((window as any).__ariaAddCompletionMessage && snap.report) {
-            // No session_id saved (older simulations) — fall back to report card only
+          // Signal chat to clear and prepare for restored content
+          if ((window as any).__ariaClearForRestore) (window as any).__ariaClearForRestore()
+
+          // Always show the scenario prompt + report directly.
+          // Don't fetch full session messages — sessions can contain multiple sims
+          // which causes mixed/confusing conversation threads.
+          if ((window as any).__ariaAddCompletionMessage && snap.report) {
+            // Show user prompt and report
+            if ((window as any).__ariaRestoreMessages) {
+              ;(window as any).__ariaRestoreMessages([
+                { role: 'user', content: `Run simulation: ${snap.scenarioName}` },
+                { role: 'aria', content: `Starting simulation for "${snap.scenarioName}"…\n${snap.description || ''}` },
+              ])
+            }
             setTimeout(() => injectRestoredReport(snap), 50)
+          } else if ((window as any).__ariaRestoreMessages) {
+            // No report — just show the scenario prompt
+            ;(window as any).__ariaRestoreMessages([
+              { role: 'user', content: `Run simulation: ${snap.scenarioName}` },
+              { role: 'aria', content: snap.description
+                ? `Starting simulation for "${snap.scenarioName}"…\n${snap.description}`
+                : `Simulation: "${snap.scenarioName}" (no report available for this run)` },
+            ])
           }
 
           setHistoryOpen(false)
@@ -242,6 +236,7 @@ export default function DashboardPage({ session }: Props) {
           profile={profile} 
           onLaunch={sim.launch}
           onSimulationComplete={() => {}}
+          onReset={sim.reset}
           simulationStatus={sim.status}
         />
 
@@ -283,7 +278,7 @@ export default function DashboardPage({ session }: Props) {
             const displayName     = tabSim ? tabSim.scenarioName : sim.scenarioName
 
             // For restored history items shown in the summary panel
-            const showRestoredSummary = displayAgents.length === 0 && sim.status === 'done' && sim.restoredReport && sim.completedSims.length === 0
+            const showRestoredSummary = sim.isRestoredFromHistory && sim.status === 'done' && sim.restoredReport && sim.completedSims.length === 0
 
             return (
             <div style={{
@@ -345,9 +340,15 @@ export default function DashboardPage({ session }: Props) {
 
               {/* Top bar */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-                <span style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--gray-900)' }}>
-                  {displayName || '—'}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1, minWidth: 0 }}>
+                  <span style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--gray-900)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {displayName || '—'}
+                  </span>
+                  {/* Monte Carlo badge — shows live run progress and convergence */}
+                  {sim.monteCarloState && (
+                    <MonteCarloBadge mc={sim.monteCarloState} />
+                  )}
+                </div>
                 {isLive && (sim.status === 'running' || sim.status === 'paused') && (
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <CtrlBtn onClick={sim.togglePause} title="Pause / Resume">
@@ -384,26 +385,11 @@ export default function DashboardPage({ session }: Props) {
               {/* Main area */}
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: displayFeed.length > 0 ? '1fr 260px' : '1fr',
+                gridTemplateColumns: displayFeed.length > 0 && !sim.isRestoredFromHistory ? '1fr 260px' : '1fr',
                 gap: '0.75rem', flex: 1, overflow: 'hidden', minHeight: 0,
               }}>
                 {showRestoredSummary ? (
                   <RestoredSummaryPanel report={sim.restoredReport!} description={sim.restoredDescription} />
-                ) : tabSim?.report && displayAgents.length === 0 ? (
-                  // Completed tab with a saved report — show summary panel
-                  <RestoredSummaryPanel
-                    report={{
-                      risk_level:          tabSim.report.risk_summary?.risk_level || '',
-                      churn_rate:          tabSim.report.risk_summary?.churn_rate ?? 0,
-                      visit_rate:          tabSim.report.risk_summary?.visit_rate ?? 0,
-                      estimated_revenue:   tabSim.report.risk_summary?.estimated_revenue ?? 0,
-                      total_agents:        tabSim.report.risk_summary?.total_agents ?? 0,
-                      archetype_breakdown: tabSim.report.archetype_breakdown || {},
-                      recommendations:     tabSim.report.recommendations || [],
-                      analysis:            tabSim.report.analysis || '',
-                    }}
-                    description={''}
-                  />
                 ) : (
                   <InfluenceGraph
                     agents={displayAgents}
@@ -412,7 +398,7 @@ export default function DashboardPage({ session }: Props) {
                     onClearHighlight={() => setHighlightedAgentId(null)}
                   />
                 )}
-                {displayFeed.length > 0 && (
+                {displayFeed.length > 0 && !sim.isRestoredFromHistory && (
                   <ActivityFeed items={displayFeed} onAgentClick={setHighlightedAgentId} highlightedAgentId={highlightedAgentId} />
                 )}
               </div>
@@ -506,6 +492,106 @@ function CtrlBtn({ onClick, title, children }: { onClick: () => void; title?: st
     >
       {children}
     </button>
+  )
+}
+
+function MonteCarloBadge({ mc }: { mc: MonteCarloState }) {
+  const [hov, setHov] = useState(false)
+
+  // Determine badge color based on state
+  const isComplete = mc.completed
+  const hasConverged = mc.converged
+  const isRunning = !mc.completed && mc.current_run > 0
+
+  let bgColor: string, borderColor: string, textColor: string, dotColor: string
+  if (isComplete && hasConverged) {
+    bgColor = '#f0fdf4'; borderColor = '#22c55e'; textColor = '#15803d'; dotColor = '#22c55e'
+  } else if (isComplete && !hasConverged) {
+    bgColor = '#fef3c7'; borderColor = '#f59e0b'; textColor = '#a16207'; dotColor = '#f59e0b'
+  } else if (isRunning) {
+    bgColor = '#eff6ff'; borderColor = '#3b82f6'; textColor = '#1d4ed8'; dotColor = '#3b82f6'
+  } else {
+    bgColor = 'var(--gray-100)'; borderColor = 'var(--gray-300)'; textColor = 'var(--gray-600)'; dotColor = 'var(--gray-400)'
+  }
+
+  // Build progress percentage based on min_runs (not max_runs) so badge fills near convergence
+  const targetRuns = isComplete ? mc.current_run : Math.max(mc.min_runs, mc.current_run)
+  const progressPct = mc.max_runs > 0 ? Math.min(100, (mc.current_run / targetRuns) * 100) : 0
+
+  // Tooltip content - using business-friendly language
+  // CV (coefficient of variation) is a measure of how much results vary across runs
+  // Lower CV = more consistent results = more reliable predictions
+  const tooltip = isComplete
+    ? hasConverged
+      ? `Results are reliable.\nCompleted ${mc.current_run} runs with consistent outcomes.\nResult variation: ${mc.wci_cv.toFixed(1)}% (lower is better)`
+      : `Results may vary.\nCompleted ${mc.current_run} runs but outcomes weren't fully consistent.\nResult variation: ${mc.wci_cv.toFixed(1)}%`
+    : mc.current_run === 0
+      ? `Running this scenario ${mc.min_runs}-${mc.max_runs} times to make sure results are reliable. We'll stop early once results stabilize.`
+      : mc.wci_cv > 0
+        ? `Run ${mc.current_run} of ${mc.max_runs}\nResult variation so far: ${mc.wci_cv.toFixed(1)}% (need ≤${mc.cv_threshold.toFixed(0)}% to confirm reliable)`
+        : `Run ${mc.current_run} of ${mc.max_runs}\nGathering initial data (need at least ${mc.min_runs} runs)`
+
+  return (
+    <div
+      title={tooltip}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: '0.4rem',
+        padding: '0.25rem 0.6rem',
+        background: bgColor,
+        border: `1.5px solid ${borderColor}`,
+        borderRadius: 999,
+        fontSize: '0.72rem',
+        fontWeight: 600,
+        color: textColor,
+        whiteSpace: 'nowrap',
+        cursor: 'help',
+        position: 'relative',
+        overflow: 'hidden',
+        transition: 'all 0.2s ease',
+        boxShadow: hov ? '0 2px 8px rgba(0,0,0,0.08)' : 'none',
+      }}
+    >
+      {/* Subtle progress fill background */}
+      {!isComplete && (
+        <div style={{
+          position: 'absolute', left: 0, top: 0, bottom: 0,
+          width: `${progressPct}%`,
+          background: 'rgba(59, 130, 246, 0.08)',
+          transition: 'width 0.4s ease',
+          pointerEvents: 'none',
+        }} />
+      )}
+
+      {/* Status dot */}
+      <span style={{
+        width: 7, height: 7, borderRadius: '50%',
+        background: dotColor,
+        position: 'relative', zIndex: 1,
+        animation: isRunning ? 'pulse-dot 1.2s infinite' : 'none',
+      }} />
+
+      {/* Label */}
+      <span style={{ position: 'relative', zIndex: 1 }}>
+        {isComplete ? (
+          hasConverged ? (
+            <>✓ Completed · {mc.current_run} runs</>
+          ) : (
+            <>⚠ Completed · {mc.current_run} runs</>
+          )
+        ) : (
+          <>
+            🔁 Run {mc.current_run || 0} of {mc.max_runs}
+            {mc.wci_cv > 0 && (
+              <span style={{ marginLeft: '0.35rem', opacity: 0.8 }}>
+                · {mc.wci_cv.toFixed(1)}% variation
+              </span>
+            )}
+          </>
+        )}
+      </span>
+    </div>
   )
 }
 

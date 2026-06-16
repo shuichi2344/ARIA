@@ -10,6 +10,10 @@ interface Props {
   onRestore: (snap: SimSnapshot) => void
   onDelete: (id: string) => void
   onNewChat: () => void
+  // Current/live simulation info
+  currentSimName?: string
+  currentSimStatus?: 'running' | 'paused' | 'done' | 'idle'
+  onGoToCurrent?: () => void
 }
 
 const SCENARIO_ICONS: Record<string, string> = {
@@ -34,7 +38,7 @@ function groupByDate(history: SimSnapshot[]): { label: string; items: SimSnapsho
     Older:          [],
   }
 
-  for (const snap of [...history].reverse()) {
+  for (const snap of history) {
     const d = new Date(snap.completedAt)
     const day = new Date(d.getFullYear(), d.getMonth(), d.getDate())
     if (day >= today)         groups['Today'].push(snap)
@@ -52,10 +56,12 @@ function fmt(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
-export default function HistorySidebar({ open, onClose, history, onRestore, onDelete, onNewChat }: Props) {
+export default function HistorySidebar({ open, onClose, history, onRestore, onDelete, onNewChat, currentSimName, currentSimStatus, onGoToCurrent }: Props) {
   const [hoverId, setHoverId] = useState<string | null>(null)
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const groups = groupByDate(history)
+
+  const showCurrentItem = currentSimName && currentSimStatus && (currentSimStatus === 'running' || currentSimStatus === 'paused')
 
   return (
     <>
@@ -114,7 +120,59 @@ export default function HistorySidebar({ open, onClose, history, onRestore, onDe
 
         {/* List */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '0.5rem 0' }}>
-          {groups.length === 0 ? (
+          {/* Current/live simulation — pinned at top */}
+          {showCurrentItem && (
+            <div>
+              <div style={{
+                padding: '0.5rem 1.25rem 0.25rem',
+                fontSize: '0.7rem', fontWeight: 700,
+                color: 'var(--accent)',
+                textTransform: 'uppercase', letterSpacing: '0.06em',
+              }}>
+                Current
+              </div>
+              <div
+                onClick={() => { onGoToCurrent?.(); onClose() }}
+                onMouseEnter={() => setHoverId('__current__')}
+                onMouseLeave={() => setHoverId(null)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '0.5rem',
+                  padding: '0.6rem 1.25rem',
+                  background: hoverId === '__current__' ? 'var(--gray-50)' : 'transparent',
+                  cursor: 'pointer',
+                  transition: 'background 0.1s',
+                  borderLeft: '3px solid var(--accent)',
+                }}
+              >
+                {/* Status dot */}
+                <span style={{
+                  width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                  background: currentSimStatus === 'running' ? '#22c55e'
+                    : currentSimStatus === 'paused' ? '#f59e0b'
+                    : 'var(--accent)',
+                  animation: currentSimStatus === 'running' ? 'pulse-dot 1.2s infinite' : 'none',
+                }} />
+
+                {/* Text */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontSize: '0.85rem', fontWeight: 600,
+                    color: 'var(--gray-900)',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  }}>
+                    {currentSimName}
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--gray-500)', marginTop: 1 }}>
+                    {currentSimStatus === 'running' ? 'Running now…'
+                      : currentSimStatus === 'paused' ? 'Paused'
+                      : 'Just completed'}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {groups.length === 0 && !showCurrentItem ? (
             <div style={{
               display: 'flex', flexDirection: 'column', alignItems: 'center',
               justifyContent: 'center', height: '100%', gap: '0.75rem',

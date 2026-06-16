@@ -2,7 +2,7 @@
 FastAPI main application for ARIA platform.
 """
 
-from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any
@@ -13,7 +13,8 @@ import sys
 
 from aria.agents.customer_profiler import CustomerProfiler
 from aria.database.supabase_client import SupabaseClient
-from aria.auth.password import validate_password_strength, PASSWORD_REQUIREMENTS
+from aria.auth.password import validate_password_strength
+from aria.simulation.monte_carlo_cv import MonteCarloConfig
 from aria.api.security import (
     limiter,
     rate_limit_exceeded_handler,
@@ -28,7 +29,6 @@ from aria.api.security import (
     SUGGEST_RATE_LIMIT,
     GENERAL_RATE_LIMIT,
 )
-from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 # Configure logging to show INFO level messages
@@ -814,6 +814,39 @@ class SimulationStartRequest(BaseModel):
     target_customer_constraints: Optional[List[str]] = None
     business_size_constraints: Optional[List[str]] = None
     b2b_percentage: Optional[int] = Field(None, ge=0, le=100)
+    
+    # Monte Carlo CV parameters
+    monte_carlo_enabled: bool = Field(default=True, description="Enable Monte Carlo convergence-based stopping")
+    monte_carlo_min_runs: int = Field(default=5, ge=3, le=10, description="Minimum Monte Carlo runs before checking convergence")
+    monte_carlo_max_runs: int = Field(default=30, ge=5, le=50, description="Maximum Monte Carlo runs (cost control)")
+    monte_carlo_cv_threshold: float = Field(default=5.0, ge=1.0, le=15.0, description="CV threshold for convergence (%)")
+
+    @field_validator("scenario")
+    @classmethod
+    def validate_scenario_parameters(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate scenario parameters, especially hours_extension for Extended Operating Hours."""
+        scenario_type = v.get("scenario_type", "")
+        parameters = v.get("parameters", {})
+        
+        # Validate Extended Operating Hours scenario
+        if scenario_type == "operating_hours_change" and "hours_extension" in parameters:
+            hours = parameters["hours_extension"]
+            
+            # Must be a number
+            if not isinstance(hours, (int, float)):
+                raise ValueError("hours_extension must be a number")
+            
+            # Must be a positive integer
+            if hours <= 0:
+                raise ValueError("hours_extension must be a positive number (greater than 0)")
+            
+            if not float(hours).is_integer():
+                raise ValueError("hours_extension must be a whole number (integer)")
+            
+            # Convert to int to ensure it's stored as integer
+            parameters["hours_extension"] = int(hours)
+        
+        return v
 
 
 @app.post("/api/simulation/suggest")
@@ -908,7 +941,6 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
         
         customer_profile = profile.get("customer_profile") or {}
         customer_type = customer_profile.get("customer_type", "B2C")
-        b2c = customer_profile.get("b2c_profile") or {}
         b2b = customer_profile.get("b2b_profile") or {}
 
         # Use constraint fields from request body
@@ -978,6 +1010,13 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
                 "agents_cached":  True,  # Flag: skip LLM profile generation
                 "active_spark":   active_spark,
                 "spark_section":  spark_section,
+                # Monte Carlo configuration
+                "monte_carlo_enabled": body.monte_carlo_enabled,
+                "monte_carlo_config": MonteCarloConfig(
+                    min_runs=body.monte_carlo_min_runs,
+                    max_runs=body.monte_carlo_max_runs,
+                    cv_threshold=body.monte_carlo_cv_threshold,
+                ) if body.monte_carlo_enabled else None,
             }
 
             asyncio.create_task(_run_simulation(sim_id))
@@ -1006,14 +1045,12 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
 
         # Generate agents using IPF synthetic population + LLM profiles
         from aria.population.synthetic_population import SyntheticPopulationGenerator
-        from aria.simulation.llm_agent_brain import LLMAgentBrain
         
         print("\n📊 PHASE 1: Generating Synthetic Population (IPF)")
         print("-" * 80)
         
-        # Initialize generators
+        # Initialize generator
         pop_generator = SyntheticPopulationGenerator(use_ipf=True)
-        llm_brain = LLMAgentBrain()
         
         # Build business_profile dict for IPF (basic fields)
         business_profile_dict = {
@@ -1224,6 +1261,13 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
             "cache_key":      cache_key,  # For caching after LLM profiles are generated
             "active_spark":   active_spark,
             "spark_section":  spark_section,
+            # Monte Carlo configuration
+            "monte_carlo_enabled": body.monte_carlo_enabled,
+            "monte_carlo_config": MonteCarloConfig(
+                min_runs=body.monte_carlo_min_runs,
+                max_runs=body.monte_carlo_max_runs,
+                cv_threshold=body.monte_carlo_cv_threshold,
+            ) if body.monte_carlo_enabled else None,
         }
 
         # Kick off background simulation task
@@ -1404,8 +1448,221 @@ def _extract_personality_type(profile_text: str) -> str:
 
 async def _run_simulation(sim_id: str):
     """
+    Main simulation entry point - handles Monte Carlo or single run.
+    """
+    sim = _active_sims[sim_id]
+    
+    # Check if Monte Carlo is enabled
+    if sim.get("monte_carlo_enabled") and sim.get("monte_carlo_config"):
+        await _run_simulation_with_monte_carlo(sim_id)
+    else:
+        # Single-run mode: run once, then finalize (DB save + report)
+        result_data = await _run_simulation_single(sim_id)
+        if result_data is None:
+            return  # Simulation was aborted
+        from aria.simulation.llm_agent_brain import LLMAgentBrain
+        llm_brain = LLMAgentBrain()
+        await _finalize_simulation(sim_id, result_data, llm_brain)
+
+
+async def _run_simulation_with_monte_carlo(sim_id: str):
+    """
+    Runs simulation with Monte Carlo CV-based stopping.
+    """
+    sim = _active_sims[sim_id]
+    config: MonteCarloConfig = sim["monte_carlo_config"]
+    q: asyncio.Queue = sim["events"]
+    
+    logger.info(f"Starting Monte Carlo simulation: min={config.min_runs}, max={config.max_runs}, CV≤{config.cv_threshold}%")
+    
+    # Emit Monte Carlo start event
+    await q.put({
+        "type": "monte_carlo_start",
+        "data": {
+            "min_runs": config.min_runs,
+            "max_runs": config.max_runs,
+            "cv_threshold": config.cv_threshold,
+        }
+    })
+    
+    from aria.simulation.monte_carlo_cv import MonteCarloTracker, RunResult
+    tracker = MonteCarloTracker(config)
+    
+    # Accumulate metrics across all runs for averaging
+    all_run_metrics: List[Dict[str, Any]] = []
+    # Accumulate per-group breakdown across all runs for averaging
+    all_run_breakdowns: List[Dict[str, Dict[str, int]]] = []
+    
+    # Run multiple simulations until convergence
+    for run_num in range(1, config.max_runs + 1):
+        logger.info(f"Monte Carlo run {run_num}/{config.max_runs}...")
+        
+        # Reset agent state between runs (so each run starts fresh)
+        if run_num > 1:
+            for agent in sim["agents"]:
+                agent["is_active"] = True
+                agent["visited_this_week"] = False
+                agent["spend_this_week"] = 0.0
+                agent["last_decision"] = None
+                agent["reasoning"] = None
+            # Mark agents as cached so we don't regenerate LLM profiles
+            sim["agents_cached"] = True
+        
+        # Emit run start event
+        await q.put({
+            "type": "monte_carlo_run_start",
+            "data": {"run_number": run_num, "max_runs": config.max_runs}
+        })
+        
+        # Run single simulation
+        result_data = await _run_simulation_single(sim_id, run_number=run_num)
+        
+        # If simulation was aborted, stop the Monte Carlo loop
+        if result_data is None:
+            logger.info(f"Simulation {sim_id} was aborted — stopping Monte Carlo")
+            return
+        
+        all_run_metrics.append(result_data)  # Accumulate all runs for averaging
+        
+        # Capture per-group breakdown for this run (before agents get reset next iteration)
+        mesa_agents_snapshot = sim.get("_last_mesa_agents", [])
+        is_price_scenario = sim.get("_last_is_price_scenario", False)
+        run_breakdown: Dict[str, Dict[str, int]] = {}
+        for ma in mesa_agents_snapshot:
+            if is_price_scenario:
+                group = ma.income_level
+            else:
+                group = getattr(ma, 'personality_type', 'customer')
+            if group not in run_breakdown:
+                run_breakdown[group] = {"total": 0, "visit": 0, "skip": 0, "churn": 0}
+            run_breakdown[group]["total"] += 1
+            decision = ma.last_decision or "visit"
+            if decision in run_breakdown[group]:
+                run_breakdown[group][decision] += 1
+        all_run_breakdowns.append(run_breakdown)
+        
+        # Extract metrics
+        visits = result_data.get('total_visits', 0)
+        skips = result_data.get('total_skips', 0)
+        churns = result_data.get('total_churned', 0)
+        total_agents = visits + skips + churns
+        
+        # Create run result
+        run_result = RunResult(
+            run_number=run_num,
+            visits=visits,
+            skips=skips,
+            churns=churns,
+            churn_rate=(churns / total_agents * 100) if total_agents > 0 else 0.0,
+            total_visits=visits,
+            total_revenue=result_data.get('total_revenue', 0.0),
+            active_agents=result_data.get('active_agents', total_agents - churns),
+            metadata=result_data.get('metadata')
+        )
+        
+        # Add to tracker
+        should_stop = tracker.add_run(run_result)
+        
+        # Get status message
+        status_msg = tracker.get_status_message()
+        logger.info(f"Run {run_num}: {status_msg}")
+        
+        # Get current summary to check convergence
+        current_summary = tracker.get_summary()
+        
+        # Emit progress event
+        await q.put({
+            "type": "monte_carlo_progress",
+            "data": {
+                "run_number": run_num,
+                "wci": tracker.get_mean("wci") if tracker.get_mean("wci") else 0,
+                "wci_cv": tracker.get_cv("wci") if tracker.get_cv("wci") else 0,
+                "status": status_msg,
+                "converged": current_summary.get('converged', False),
+            }
+        })
+        
+        # Check if we should stop
+        if should_stop:
+            if current_summary.get('converged'):
+                logger.info(f"✓ Converged after {run_num} runs!")
+            else:
+                logger.info(f"⚠ Stopped at max runs ({run_num})")
+            break
+    
+    # Get final summary
+    summary = tracker.get_summary()
+    actual_runs = summary['num_runs']
+    
+    logger.info(f"Monte Carlo complete: {actual_runs} runs, WCI={summary['wci']['mean']:.1f}±{summary['wci']['std_dev']:.1f}")
+    
+    # Store summary in sim state for report generation
+    sim["monte_carlo_summary"] = summary
+    sim["monte_carlo_total_runs"] = actual_runs
+    sim["monte_carlo_converged"] = summary['converged']
+    sim["monte_carlo_stopped_reason"] = summary['stopped_reason']
+    
+    # Emit Monte Carlo complete event
+    await q.put({
+        "type": "monte_carlo_complete",
+        "data": {
+            "summary": summary,
+            "converged": summary['converged'],
+            "total_runs": actual_runs,
+            "wci_mean": summary['wci']['mean'],
+            "wci_cv": summary['wci']['cv'],
+        }
+    })
+    
+    # Finalize: save to DB and generate report using AVERAGED metrics across all runs
+    if all_run_metrics:
+        num_runs = len(all_run_metrics)
+        averaged_metrics = {
+            "total_visits": round(sum(r.get("total_visits", 0) for r in all_run_metrics) / num_runs),
+            "total_skips": round(sum(r.get("total_skips", 0) for r in all_run_metrics) / num_runs),
+            "total_churned": round(sum(r.get("total_churned", 0) for r in all_run_metrics) / num_runs),
+            "total_revenue": sum(r.get("total_revenue", 0.0) for r in all_run_metrics) / num_runs,
+            "active_agents": round(sum(r.get("active_agents", 0) for r in all_run_metrics) / num_runs),
+        }
+        
+        # Average the per-group breakdown across all runs
+        averaged_breakdown: Dict[str, Dict[str, float]] = {}
+        for run_bd in all_run_breakdowns:
+            for group, counts in run_bd.items():
+                if group not in averaged_breakdown:
+                    averaged_breakdown[group] = {"total": 0.0, "visit": 0.0, "skip": 0.0, "churn": 0.0}
+                for key in ("total", "visit", "skip", "churn"):
+                    averaged_breakdown[group][key] += counts.get(key, 0)
+        # Divide by number of runs to get averages
+        for group in averaged_breakdown:
+            for key in ("total", "visit", "skip", "churn"):
+                averaged_breakdown[group][key] = round(averaged_breakdown[group][key] / num_runs)
+        
+        # Store averaged breakdown for _finalize_simulation to use
+        sim["_averaged_breakdown"] = averaged_breakdown
+        
+        logger.info(f"Averaged metrics over {num_runs} runs: visits={averaged_metrics['total_visits']}, "
+                    f"skips={averaged_metrics['total_skips']}, churns={averaged_metrics['total_churned']}, "
+                    f"revenue=RM{averaged_metrics['total_revenue']:.2f}")
+        
+        from aria.simulation.llm_agent_brain import LLMAgentBrain
+        llm_brain = LLMAgentBrain()
+        await _finalize_simulation(sim_id, averaged_metrics, llm_brain)
+    else:
+        logger.error("Monte Carlo completed but no run data available — skipping finalization")
+
+
+async def _run_simulation_single(sim_id: str, run_number: int = 1) -> Dict[str, Any]:
+    """
     Runs the simulation as a single pass, pushing SSE events to the queue.
     Uses hybrid Mesa + LLM decisions.
+    
+    Args:
+        sim_id: Simulation ID
+        run_number: Run number (for Monte Carlo mode, default 1 for single run)
+    
+    Returns:
+        Dictionary with simulation results (total_visits, total_skips, total_churned, total_revenue, active_agents)
     """
     sim = _active_sims[sim_id]
     sim["started_at"] = datetime.now(timezone.utc).isoformat()
@@ -1413,7 +1670,6 @@ async def _run_simulation(sim_id: str):
     agents = sim["agents"]
     scenario = sim["scenario"]
     business_profile = sim.get("business_profile", {})
-    customer_type = business_profile.get("customer_type", "B2C")
     spark_section = sim.get("spark_section", "")
 
     def _is_aborted() -> bool:
@@ -2110,7 +2366,57 @@ Message: [15-20 word message explaining your choice after hearing from friends]"
     print(f"  Retention Rate: {active_final/len(agents)*100:.1f}%")
     print("="*80 + "\n")
     
+    # ─── Save mesa_agents to sim state for finalization ───
+    # The simulation can be called multiple times in MC mode; the FINAL run's
+    # mesa_agents will be the ones used to generate the report.
+    sim["_last_mesa_agents"] = mesa_agents
+    sim["_last_is_price_scenario"] = is_price_scenario
+    
+    # Return run results for Monte Carlo tracking
+    return {
+        "total_visits": total_visits,
+        "total_skips": len(agents) - total_visits - total_churned,
+        "total_churned": total_churned,
+        "total_revenue": total_revenue,
+        "active_agents": sum(1 for a in agents if a["is_active"]),
+        "agents": agents,
+    }
+
+
+async def _finalize_simulation(sim_id: str, run_metrics: Dict[str, Any], llm_brain) -> None:
+    """
+    Finalize a simulation: save to database, generate report, emit completion event.
+    
+    Called after _run_simulation_single (single-run mode) or after the Monte Carlo
+    loop completes (MC mode). Reads state from sim["_last_mesa_agents"] etc.
+    
+    Args:
+        sim_id: Simulation ID
+        run_metrics: Final run metrics (total_visits, total_skips, total_churned, total_revenue)
+        llm_brain: LLM client for generating recommendations
+    """
+    sim = _active_sims[sim_id]
+    q: asyncio.Queue = sim["events"]
+    agents = sim["agents"]
+    scenario = sim["scenario"]
+    business_profile = sim.get("business_profile", {})
+    scenario_type = scenario.get("scenario_type", "")
+    params = scenario.get("parameters", {})
+    
+    mesa_agents = sim.get("_last_mesa_agents", [])
+    is_price_scenario = sim.get("_last_is_price_scenario", False)
+    
+    # Use pre-computed averaged breakdown (from MC mode) if available,
+    # otherwise compute from the last run's mesa_agents (single-run mode)
+    averaged_breakdown = sim.get("_averaged_breakdown")
+    
+    total_visits = run_metrics.get("total_visits", 0)
+    total_churned = run_metrics.get("total_churned", 0)
+    total_revenue = run_metrics.get("total_revenue", 0.0)
+    active_final = run_metrics.get("active_agents", sum(1 for a in agents if a["is_active"]))
+    
     # ─── Save results to database ───
+    sim_db_id = None
     try:
         supabase = SupabaseClient()
         profile_id = sim.get("profile_id")
@@ -2130,12 +2436,16 @@ Message: [15-20 word message explaining your choice after hearing from friends]"
             )
             scenario_db_id = saved_scenario.get('scenario_id')
             
-            # Save simulation record
+            # Save simulation record with Monte Carlo metadata
+            mc_summary = sim.get("monte_carlo_summary")
             saved_sim = await supabase.save_simulation(
                 scenario_id=scenario_db_id,
                 agent_count=len(agents),
                 status="completed",
                 started_at=sim.get("started_at"),
+                monte_carlo_enabled=sim.get("monte_carlo_enabled", False),
+                monte_carlo_total_runs=sim.get("monte_carlo_total_runs", 1),
+                monte_carlo_converged=sim.get("monte_carlo_converged"),
             )
             sim_db_id = saved_sim.get('simulation_id')
             
@@ -2155,20 +2465,21 @@ Message: [15-20 word message explaining your choice after hearing from friends]"
             
             print(f"✓ Simulation results saved to database (sim_id: {sim_db_id})")
         else:
-            sim_db_id = None
             print("⚠ No profile_id — skipping database save")
     except Exception as e:
-        sim_db_id = None
         print(f"⚠ Failed to save simulation to database: {e}")
     
     # ─── Generate simulation report ───
     print("\n📊 Generating simulation report...")
     
-    # (is_price_scenario already set above in Phase 2)
+    from aria.simulation.llm_agent_brain import _clean_response
     
-    # Compute breakdown: by income for price scenarios, by personality for others
-    if is_price_scenario:
-        # Income-based breakdown (price sensitivity correlates with income)
+    # Compute breakdown: use averaged breakdown (MC mode) or compute from mesa_agents (single-run)
+    if averaged_breakdown:
+        # MC mode: use pre-averaged breakdown from all runs
+        breakdown_data = averaged_breakdown
+        breakdown_label = "income" if is_price_scenario else "personality"
+    elif is_price_scenario:
         income_breakdown = {}
         for mesa_agent in mesa_agents:
             level = mesa_agent.income_level
@@ -2181,7 +2492,6 @@ Message: [15-20 word message explaining your choice after hearing from friends]"
         breakdown_data = income_breakdown
         breakdown_label = "income"
     else:
-        # Personality/lifestyle-based breakdown (more relevant for non-price scenarios)
         personality_breakdown = {}
         for mesa_agent in mesa_agents:
             ptype = getattr(mesa_agent, 'personality_type', 'customer')
@@ -2211,7 +2521,6 @@ Message: [15-20 word message explaining your choice after hearing from friends]"
     recommendations = []
     analysis_explanation = ""
     try:
-        # Collect agent reasoning samples for analysis
         reasoning_samples = []
         for mesa_agent in mesa_agents:
             if mesa_agent.reasoning and mesa_agent.last_decision in ('skip', 'churn'):
@@ -2221,7 +2530,6 @@ Message: [15-20 word message explaining your choice after hearing from friends]"
                     ptype = getattr(mesa_agent, 'personality_type', 'customer')
                     reasoning_samples.append(f"[{ptype}, {mesa_agent.last_decision}]: {mesa_agent.reasoning}")
         
-        # Build breakdown text for the LLM prompt
         if is_price_scenario:
             breakdown_text = f"""Income breakdown:
 {chr(10).join(f"- {level}: {data['visit']} visit, {data['skip']} skip, {data['churn']} churn (out of {data['total']})" for level, data in breakdown_data.items())}"""
@@ -2261,7 +2569,6 @@ RECOMMENDATIONS:
         rec_response = await llm_brain.client.generate(prompt=rec_prompt, temperature=0.7, max_tokens=700)
         rec_text = _clean_response(rec_response['response'])
         
-        # Parse analysis and recommendations
         if 'ANALYSIS:' in rec_text and 'RECOMMENDATIONS:' in rec_text:
             parts = rec_text.split('RECOMMENDATIONS:')
             analysis_part = parts[0].replace('ANALYSIS:', '').strip()
@@ -2269,7 +2576,6 @@ RECOMMENDATIONS:
             analysis_explanation = analysis_part.replace('**', '')
             recommendations = [line.strip() for line in recs_part.split('\n') if line.strip() and line.strip()[0].isdigit()]
         else:
-            # Fallback: treat everything as recommendations
             recommendations = [line.strip() for line in rec_text.split('\n') if line.strip() and line.strip()[0].isdigit()]
         
         if not recommendations:
@@ -2279,6 +2585,31 @@ RECOMMENDATIONS:
         recommendations = ["Consider monitoring customer feedback closely after implementing this change."]
     
     # Build report object
+    mc_summary = sim.get("monte_carlo_summary")
+    mc_total_runs = sim.get("monte_carlo_total_runs", 1)
+
+    # Build disclaimer text
+    if mc_summary and mc_summary.get("converged"):
+        ci = mc_summary["wci"].get("confidence_interval_95")
+        ci_text = f" 95% CI: [{ci[0]:.1f}, {ci[1]:.1f}]." if ci else ""
+        disclaimer = (
+            f"Based on {mc_total_runs} runs × {len(agents)} AI agents "
+            f"= {mc_total_runs * len(agents)} total simulations. "
+            f"Results stabilized at {mc_summary['wci'].get('cv', 0):.2f}% variation.{ci_text} "
+            f"Results are statistically verified, not predictive. Actual behavior may vary."
+        )
+    elif mc_summary:
+        disclaimer = (
+            f"Based on {mc_total_runs} runs × {len(agents)} AI agents. "
+            f"Simulation reached maximum run limit. "
+            f"Results are indicative, not predictive. Actual behavior may vary."
+        )
+    else:
+        disclaimer = (
+            f"Based on a single run of {len(agents)} AI agents. "
+            f"Results are indicative, not predictive. Actual customer behavior may vary."
+        )
+
     report = {
         "scenario": {
             "name": scenario.get('scenario_name', scenario_type),
@@ -2291,8 +2622,30 @@ RECOMMENDATIONS:
             "visit_rate": round(visit_rate, 1),
             "estimated_revenue": round(total_revenue, 2),
             "total_agents": len(agents),
+            "churn_rate_std_dev": round(mc_summary["churns"]["std_dev"], 2) if mc_summary and mc_summary.get("churns", {}).get("std_dev") else None,
+            "confidence_interval_95": mc_summary["wci"].get("confidence_interval_95") if mc_summary else None,
         },
-        "breakdown_type": breakdown_label,  # "income" or "personality"
+        "monte_carlo": {
+            "total_runs": mc_total_runs,
+            "converged": mc_summary.get("converged", False),
+            "stopped_reason": mc_summary.get("stopped_reason"),
+            "wci_mean": round(mc_summary["wci"]["mean"], 2) if mc_summary else None,
+            "wci_std_dev": round(mc_summary["wci"]["std_dev"], 2) if mc_summary else None,
+            "wci_cv": round(mc_summary["wci"]["cv"], 2) if mc_summary and mc_summary["wci"].get("cv") else None,
+            "confidence_interval_95": mc_summary["wci"].get("confidence_interval_95") if mc_summary else None,
+            "run_by_run": [
+                {
+                    "run": r["run_number"],
+                    "wci": round(r["wci"], 2),
+                    "churn_rate": round((r["churns"] / len(agents)) * 100, 1) if len(agents) > 0 else 0,
+                    "visits": r["visits"],
+                    "skips": r["skips"],
+                    "churns": r["churns"],
+                }
+                for r in mc_summary.get("runs", [])
+            ] if mc_summary else [],
+        } if mc_summary else None,
+        "breakdown_type": breakdown_label,
         "archetype_breakdown": {
             level: {
                 "total": data["total"],
@@ -2304,7 +2657,7 @@ RECOMMENDATIONS:
         },
         "recommendations": recommendations,
         "analysis": analysis_explanation,
-        "disclaimer": f"Based on a simulation of {len(agents)} AI agents. Results are indicative, not predictive. Actual customer behavior may vary.",
+        "disclaimer": disclaimer,
     }
     
     print(f"✓ Report generated (risk: {risk_level}, churn: {churn_rate:.1f}%)")
@@ -2315,11 +2668,13 @@ RECOMMENDATIONS:
             await supabase.save_simulation_report(
                 simulation_id=sim_db_id,
                 report=report,
+                monte_carlo_summary=mc_summary,
             )
             print(f"✓ Report saved to database")
         except Exception as e:
             print(f"⚠ Failed to save report: {e}")
     
+    # Emit completion event to frontend
     await q.put({
         "type": "simulation_complete",
         "data": {
@@ -2432,7 +2787,6 @@ from aria.sparks.spark_manager import (
     SparkAnswerRequest,
     SparkActivateRequest,
     SparkUpdateRequest,
-    QAState,
 )
 from aria.sparks.spark_qa_engine import SparkQAEngine
 

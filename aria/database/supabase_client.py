@@ -5,11 +5,9 @@ This is a fallback when direct PostgreSQL connection doesn't work.
 
 import aiohttp
 import hashlib
-import json
 import secrets
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
-import uuid
 from aria.config import get_settings
 
 
@@ -506,8 +504,22 @@ class SupabaseClient:
         agent_count: int,
         status: str = "completed",
         started_at: Optional[str] = None,
+        monte_carlo_enabled: bool = False,
+        monte_carlo_total_runs: int = 1,
+        monte_carlo_converged: Optional[bool] = None,
     ) -> Dict[str, Any]:
-        """Save a simulation record to the database."""
+        """
+        Save a simulation record to the database.
+        
+        Args:
+            scenario_id: UUID of the scenario
+            agent_count: Number of agents in simulation
+            status: Simulation status
+            started_at: ISO timestamp when simulation started
+            monte_carlo_enabled: Whether Monte Carlo CV was used
+            monte_carlo_total_runs: Total number of MC runs executed
+            monte_carlo_converged: Whether MC converged (WCI CV <= threshold)
+        """
         url = f"{self.base_url}/rest/v1/simulations"
         now = datetime.now(timezone.utc).isoformat()
         data = {
@@ -518,6 +530,9 @@ class SupabaseClient:
             "progress_percentage": 100.0,
             "started_at": started_at or now,
             "completed_at": now,
+            "monte_carlo_enabled": monte_carlo_enabled,
+            "monte_carlo_total_runs": monte_carlo_total_runs,
+            "monte_carlo_converged": monte_carlo_converged,
         }
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=data, headers=self.headers) as response:
@@ -547,8 +562,16 @@ class SupabaseClient:
         self,
         simulation_id: str,
         report: Dict[str, Any],
+        monte_carlo_summary: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Save simulation report to the database."""
+        """
+        Save simulation report to the database.
+        
+        Args:
+            simulation_id: UUID of the simulation
+            report: Report data with risk_summary, archetype_breakdown, recommendations
+            monte_carlo_summary: Optional Monte Carlo convergence statistics
+        """
         url = f"{self.base_url}/rest/v1/simulation_reports"
         data = {
             "simulation_id": simulation_id,
@@ -559,6 +582,7 @@ class SupabaseClient:
             "archetype_breakdown": report["archetype_breakdown"],
             "recommendations": report["recommendations"],
             "analysis": report.get("analysis", ""),
+            "monte_carlo_summary": monte_carlo_summary,
         }
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=data, headers=self.headers) as response:
@@ -569,7 +593,7 @@ class SupabaseClient:
     async def list_simulation_history(self, profile_id: str) -> List[Dict[str, Any]]:
         """
         List simulation history for a business profile.
-        Returns scenarios with their simulation results and reports, ordered by most recent.
+        Returns scenarios with their simulation results, reports, and agent events.
         """
         # First get scenarios for this profile
         url = f"{self.base_url}/rest/v1/scenarios"
@@ -584,10 +608,10 @@ class SupabaseClient:
                 if response.status != 200:
                     return []
                 scenarios = await response.json()
-        
+
         if not scenarios:
             return []
-        
+
         # Get simulations for these scenarios
         scenario_ids = [s['scenario_id'] for s in scenarios]
         sim_url = f"{self.base_url}/rest/v1/simulations"
@@ -602,45 +626,100 @@ class SupabaseClient:
                 if response.status != 200:
                     return []
                 simulations = await response.json()
-        
+
         if not simulations:
             return []
-        
-        # Get reports for these simulations
+
         sim_ids = [s['simulation_id'] for s in simulations]
-        report_url = f"{self.base_url}/rest/v1/simulation_reports"
-        report_params = {
-            "simulation_id": f"in.({','.join(sim_ids)})",
-            "select": "*",
-        }
+
+        # Fetch reports and events in parallel
         async with aiohttp.ClientSession() as session:
-            async with session.get(report_url, params=report_params, headers=self.headers) as response:
-                reports = await response.json() if response.status == 200 else []
-        
+            report_task = session.get(
+                f"{self.base_url}/rest/v1/simulation_reports",
+                params={"simulation_id": f"in.({','.join(sim_ids)})", "select": "*"},
+                headers=self.headers,
+            )
+            events_task = session.get(
+                f"{self.base_url}/rest/v1/simulation_events",
+                params={
+                    "simulation_id": f"in.({','.join(sim_ids)})",
+                    "select": "simulation_id,agent_id,income_level,decision,reasoning,spend_amount,profile_text",
+                    "order": "agent_id.asc",
+                },
+                headers=self.headers,
+            )
+            async with report_task as report_resp, events_task as events_resp:
+                reports = await report_resp.json() if report_resp.status == 200 else []
+                events  = await events_resp.json() if events_resp.status == 200 else []
+
         # Build lookup maps
         scenario_map = {s['scenario_id']: s for s in scenarios}
-        report_map = {r['simulation_id']: r for r in reports}
-        
+        report_map   = {r['simulation_id']: r for r in (reports or [])}
+
+        # Group events by simulation_id
+        events_by_sim: Dict[str, List[Dict[str, Any]]] = {}
+        for ev in (events or []):
+            sid = ev['simulation_id']
+            events_by_sim.setdefault(sid, []).append(ev)
+
         # Combine into history items
         history = []
         for sim in simulations:
             scenario = scenario_map.get(sim['scenario_id'], {})
-            report = report_map.get(sim['simulation_id'])
-            # Ensure timestamp has UTC suffix so frontend interprets correctly
+            report   = report_map.get(sim['simulation_id'])
+            sim_events = events_by_sim.get(sim['simulation_id'], [])
+
+            # Reconstruct agents list from saved events
+            agents = [
+                {
+                    "agent_id":      ev['agent_id'],
+                    "persona_name":  f"Customer {ev['agent_id']}",
+                    "income_level":  ev.get('income_level', 'M40'),
+                    "age_range":     "",
+                    "is_active":     ev.get('decision') != 'churn',
+                    "last_decision": ev.get('decision'),
+                    "reasoning":     ev.get('reasoning', ''),
+                    "personality":   ev.get('profile_text', ''),
+                    "personality_type": "",
+                }
+                for ev in sim_events
+            ]
+
+            # Reconstruct activity feed from saved events
+            feed = [
+                {
+                    "id":       ev['agent_id'],
+                    "type":     ev.get('decision', 'visit'),
+                    "agentId":  ev['agent_id'],
+                    "html": (
+                        f"<strong>Customer {ev['agent_id']}</strong> "
+                        + ("visited 🟢" if ev.get('decision') == 'visit'
+                           else "churned 🔴" if ev.get('decision') == 'churn'
+                           else "skipped 🟡")
+                        + f"<span class=\"reasoning\">{ev.get('reasoning', '')}</span>"
+                    ),
+                }
+                for ev in sim_events
+            ]
+
+            # Normalise timestamp
             raw_ts = sim.get('completed_at') or sim.get('created_at', '')
             if raw_ts and not raw_ts.endswith('Z') and '+' not in raw_ts:
                 raw_ts = raw_ts + 'Z'
+
             history.append({
                 'simulation_id': sim['simulation_id'],
                 'scenario_name': scenario.get('scenario_name', 'Unknown'),
                 'scenario_type': scenario.get('scenario_type', ''),
-                'description': scenario.get('description', ''),
-                'agent_count': sim.get('agent_count', 0),
-                'completed_at': raw_ts,
-                'report': report,
-                'session_id': (scenario.get('parameters') or {}).get('_session_id'),
+                'description':   scenario.get('description', ''),
+                'agent_count':   sim.get('agent_count', 0),
+                'completed_at':  raw_ts,
+                'report':        report,
+                'agents':        agents,
+                'feed':          feed,
+                'session_id':    (scenario.get('parameters') or {}).get('_session_id'),
             })
-        
+
         return history
 
     async def delete_simulation(self, simulation_id: str) -> bool:

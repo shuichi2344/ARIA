@@ -122,8 +122,8 @@ export default function InfluenceGraph({ agents, influences, highlightedAgentId,
       .attr('marker-end', 'url(#arrow-influence)')
       .style('cursor', 'pointer')
       .on('click', (_e, d) => setSelected({ type: 'edge', edge: d.edge, count: d.count }))
-      .on('mouseenter', function() { d3.select(this).attr('stroke-opacity', 1).attr('stroke-width', d => Math.min(2 + d.count * 0.5, 5)) })
-      .on('mouseleave', function() { d3.select(this).attr('stroke-opacity', 0.6).attr('stroke-width', d => Math.min(1 + d.count * 0.5, 4)) })
+      .on('mouseenter', function(_e, d) { d3.select(this).attr('stroke-opacity', 1).attr('stroke-width', Math.min(2 + d.count * 0.5, 5)) })
+      .on('mouseleave', function(_e, d) { d3.select(this).attr('stroke-opacity', 0.6).attr('stroke-width', Math.min(1 + d.count * 0.5, 4)) })
 
     // Edge labels (shown on hover)
     const linkLabel = g.append('g').selectAll<SVGTextElement, LinkDatum>('text')

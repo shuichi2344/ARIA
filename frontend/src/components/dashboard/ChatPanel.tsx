@@ -64,31 +64,36 @@ const TEMPLATE_SCENARIOS: TemplateScenario[] = [
       field: 'hours_extension',
       label: 'Extra hours per day',
       placeholder: 'e.g. 2',
-      hint: 'How many additional hours you plan to stay open',
+      hint: 'How many additional hours you plan to stay open (must be a positive whole number)',
     },
   },
 ]
 
 interface Message {
-  id: number
+  id: string | number  // Allow both for backwards compatibility
   role: 'user' | 'aria' | 'typing'
   text?: string
   hint?: string
   showChipPrompt?: boolean
 }
 
+// Generate unique message ID
 let msgId = 0
+const generateMsgId = (): string => {
+  return `${Date.now()}-${msgId++}`
+}
 
 interface Props {
   profile: BusinessProfile | null
   onLaunch: (scenario: Scenario, agentCount?: number, options?: { income_constraints?: string[] | null; age_constraints?: string[] | null; target_customer_constraints?: string[] | null; business_size_constraints?: string[] | null; b2b_percentage?: number | null; chat_session_id?: string | null }) => void
   onSimulationComplete?: (summary: string) => void
+  onReset?: () => void
   simulationStatus?: 'idle' | 'running' | 'paused' | 'done'
 }
 
-export default function ChatPanel({ profile, onLaunch, onSimulationComplete, simulationStatus = 'idle' }: Props) {
+export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onReset, simulationStatus = 'idle' }: Props) {
   const [messages,  setMessages]  = useState<Message[]>([{
-    id: msgId++, role: 'aria',
+    id: generateMsgId(), role: 'aria',
     text: "Hi! I'm ARIA. Tell me about a business scenario you'd like to simulate.",
     hint: 'Try: "What happens if I raise prices by 10%?" or "A new competitor opened nearby."',
   }])
@@ -137,6 +142,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
   const [sparkQASparkId, setSparkQASparkId] = useState<string | null>(null)
   const [sparkQATotalQuestions, setSparkQATotalQuestions] = useState(0)
   const [sparkQACurrentIndex, setSparkQACurrentIndex] = useState(0)
+  const [isUpdatingExistingSpark, setIsUpdatingExistingSpark] = useState(false)
 
   // Spark management state
   const [activeSpark, setActiveSpark] = useState<SparkRecord | null>(null)
@@ -272,6 +278,23 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
         doc.text('Churn', margin + 70, y + 4)
         y += 12
 
+        // Analysis section
+        const analysis = report.analysis || ''
+        if (analysis) {
+          doc.setFontSize(13)
+          doc.setTextColor(0)
+          doc.text('Analysis', margin, y); y += 8
+          doc.setFontSize(10)
+          const analysisLines = doc.splitTextToSize(analysis, 180)
+          // Check if we need a new page
+          if (y + analysisLines.length * 5 > 280) {
+            doc.addPage()
+            y = 20
+          }
+          doc.text(analysisLines, margin + 4, y)
+          y += analysisLines.length * 5 + 8
+        }
+
         doc.setFontSize(13)
         doc.setTextColor(0)
         doc.text('Recommendations', margin, y); y += 8
@@ -320,7 +343,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
       // Clear cached agent personalities so next simulation generates fresh ones
       fetch(`${API_BASE}/api/simulation/cache/clear`, { method: 'POST' }).catch(() => {})
       setMessages([{
-        id: msgId++, role: 'aria',
+        id: generateMsgId(), role: 'aria',
         text: "Hi! I'm ARIA. Tell me about a business scenario you'd like to simulate.",
         hint: 'Try: "What happens if I raise prices by 10%?" or "A new competitor opened nearby."',
       }])
@@ -331,6 +354,22 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
       setLoading(false)
       setLastFailedQuery(null)
       setSimulationRanInSession(false)
+      // Reset simulation dashboard
+      if (onReset) onReset()
+    }
+
+    // Clear for restore — like __ariaNewChat but sets an empty message list
+    // so __ariaRestoreMessages can fill it without the welcome screen flashing
+    ;(window as any).__ariaClearForRestore = () => {
+      if (abortRef.current) { abortRef.current.abort(); abortRef.current = null }
+      setMessages([])
+      setScenarios([])
+      setHasStartedConversation(true)
+      setPendingTemplate(null)
+      setInput('')
+      setLoading(false)
+      setLastFailedQuery(null)
+      setSimulationRanInSession(true)
     }
 
     ;(window as any).__ariaRestoreMessages = (savedMessages: Array<{ role: string; content: string; metadata?: any }>) => {
@@ -362,11 +401,11 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
             </div>`
             // Store in ref so PDF download works
             latestReportRef.current = report
-            return { id: msgId++, role: 'aria' as const, text: reportHtml }
+            return { id: generateMsgId(), role: 'aria' as const, text: reportHtml }
           }
         }
         return {
-          id: msgId++,
+          id: generateMsgId(),
           role: (m.role === 'user' ? 'user' : 'aria') as 'user' | 'aria',
           text: m.content,
         }
@@ -377,9 +416,10 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
 
     return () => {
       delete (window as any).__ariaNewChat
+      delete (window as any).__ariaClearForRestore
       delete (window as any).__ariaRestoreMessages
     }
-  }, [])
+  }, [onReset])
 
   // Expose a method to add completion message with report
   useEffect(() => {
@@ -424,7 +464,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
           </div>`
           
           setMessages(p => [...p, {
-            id: msgId++,
+            id: generateMsgId(),
             role: 'aria',
             text: reportHtml,
           }])
@@ -439,7 +479,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
           setSimulationRanInSession(true)
         } else {
           setMessages(p => [...p, {
-            id: msgId++,
+            id: generateMsgId(),
             role: 'aria',
             text: '✓ Simulation complete!',
             hint: summary || 'Check the results on the right panel.'
@@ -460,10 +500,17 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
     
     // If Spark Q&A is in progress, intercept and route to answer endpoint
     if (sparkQAMode === 'answering' && sparkQASparkId) {
+      // Check if user wants to cancel
+      if (text.toLowerCase() === 'cancel') {
+        setInput('')
+        handleCancelSparkQA()
+        return
+      }
+      
       setInput('')
-      setMessages(p => [...p, { id: msgId++, role: 'user', text }])
+      setMessages(p => [...p, { id: generateMsgId(), role: 'user', text }])
       setLoading(true)
-      setMessages(p => [...p, { id: msgId++, role: 'typing' }])
+      setMessages(p => [...p, { id: generateMsgId(), role: 'typing' }])
       const userId = userIdRef.current
       try {
         const qaState = await api.submitSparkAnswer(sparkQASparkId, {
@@ -476,7 +523,8 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
 
         if (qaState.status === 'completed') {
           setSparkQAMode('complete')
-          setMessages(p => [...p, { id: msgId++, role: 'aria', text: qaState.aria_message }])
+          setIsUpdatingExistingSpark(false) // Reset update flag
+          setMessages(p => [...p, { id: generateMsgId(), role: 'aria', text: qaState.aria_message }])
 
           // Update the spark in savedSparks to status=completed
           setSavedSparks(prev => prev.map(s =>
@@ -484,16 +532,35 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
               ? { ...s, status: 'completed' as const }
               : s
           ))
+
+          // Auto-activate the spark when completed
+          if (chatSessionRef.current) {
+            try {
+              await api.activateSpark(sparkQASparkId, { 
+                user_id: userId, 
+                session_id: chatSessionRef.current 
+              })
+              const spark = savedSparks.find(s => s.spark_id === sparkQASparkId) || null
+              setActiveSpark(spark || { spark_id: sparkQASparkId, status: 'completed' as const, name: '', template_id: '', user_id: userId, answers: {}, created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+              setMessages(p => [...p, { 
+                id: generateMsgId(), 
+                role: 'aria', 
+                text: "✨ This context spark has been automatically activated for your session!" 
+              }])
+            } catch {
+              // If auto-activation fails, silently continue (user can manually activate later)
+            }
+          }
         } else if (qaState.validation_error) {
-          setMessages(p => [...p, { id: msgId++, role: 'aria', text: qaState.aria_message }])
+          setMessages(p => [...p, { id: generateMsgId(), role: 'aria', text: qaState.aria_message }])
         } else {
           setSparkQACurrentIndex(qaState.current_question_index)
-          setMessages(p => [...p, { id: msgId++, role: 'aria', text: qaState.aria_message }])
+          setMessages(p => [...p, { id: generateMsgId(), role: 'aria', text: qaState.aria_message }])
         }
       } catch {
         setMessages(p => [
           ...p.filter(m => m.role !== 'typing'),
-          { id: msgId++, role: 'aria', text: "Sorry, I couldn't save that answer. Please try again." },
+          { id: generateMsgId(), role: 'aria', text: "Sorry, I couldn't save that answer. Please try again." },
         ])
       } finally {
         setLoading(false)
@@ -507,11 +574,11 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
     abortRef.current = controller
     
     setInput('')
-    setMessages(p => [...p, { id: msgId++, role: 'user', text }])
+    setMessages(p => [...p, { id: generateMsgId(), role: 'user', text }])
     persistMessage('user', text)
     setScenarios([])
     setLoading(true)
-    setMessages(p => [...p, { id: msgId++, role: 'typing' }])
+    setMessages(p => [...p, { id: generateMsgId(), role: 'typing' }])
     
     // Mark that user has started conversation
     setHasStartedConversation(true)
@@ -546,14 +613,14 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
         const ariaText = data.analysis || "I had trouble generating scenarios for that question."
         setMessages(p => [
           ...p.filter(m => m.role !== 'typing'),
-          { id: msgId++, role: 'aria', text: ariaText, hint: "The AI response couldn't be processed. You can retry or rephrase your question." },
+          { id: generateMsgId(), role: 'aria', text: ariaText, hint: "The AI response couldn't be processed. You can retry or rephrase your question." },
         ])
         persistMessage('aria', ariaText)
       } else {
         setLastFailedQuery(null)
         setMessages(p => [
           ...p.filter(m => m.role !== 'typing'),
-          { id: msgId++, role: 'aria', text: data.analysis, hint: data.recommended_action, showChipPrompt: true },
+          { id: generateMsgId(), role: 'aria', text: data.analysis, hint: data.recommended_action, showChipPrompt: true },
         ])
         setScenarios(data.scenarios || [])
         persistMessage('aria', data.analysis, { scenarios: data.scenarios })
@@ -563,7 +630,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
       setLastFailedQuery(text)
       setMessages(p => [
         ...p.filter(m => m.role !== 'typing'),
-        { id: msgId++, role: 'aria', text: "I couldn't connect to the AI right now.", hint: 'Make sure the API server is running. You can retry below.' },
+        { id: generateMsgId(), role: 'aria', text: "I couldn't connect to the AI right now.", hint: 'Make sure the API server is running. You can retry below.' },
       ])
     } finally {
       setLoading(false)
@@ -574,10 +641,10 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
     if (!lastFailedQuery || loading) return
     const text = lastFailedQuery
     setLastFailedQuery(null)
-    setMessages(p => [...p, { id: msgId++, role: 'user', text: `(retry) ${text}` }])
+    setMessages(p => [...p, { id: generateMsgId(), role: 'user', text: `(retry) ${text}` }])
     setScenarios([])
     setLoading(true)
-    setMessages(p => [...p, { id: msgId++, role: 'typing' }])
+    setMessages(p => [...p, { id: generateMsgId(), role: 'typing' }])
 
     // Abort any pending request
     if (abortRef.current) abortRef.current.abort()
@@ -604,12 +671,12 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
         setLastFailedQuery(text)
         setMessages(p => [
           ...p.filter(m => m.role !== 'typing'),
-          { id: msgId++, role: 'aria', text: data.analysis || "Still having trouble generating scenarios.", hint: "The AI couldn't process this. Try rephrasing your question differently." },
+          { id: generateMsgId(), role: 'aria', text: data.analysis || "Still having trouble generating scenarios.", hint: "The AI couldn't process this. Try rephrasing your question differently." },
         ])
       } else {
         setMessages(p => [
           ...p.filter(m => m.role !== 'typing'),
-          { id: msgId++, role: 'aria', text: data.analysis, hint: data.recommended_action, showChipPrompt: true },
+          { id: generateMsgId(), role: 'aria', text: data.analysis, hint: data.recommended_action, showChipPrompt: true },
         ])
         setScenarios(data.scenarios || [])
       }
@@ -618,7 +685,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
       setLastFailedQuery(text)
       setMessages(p => [
         ...p.filter(m => m.role !== 'typing'),
-        { id: msgId++, role: 'aria', text: "Still couldn't connect to the AI.", hint: 'Check that the API server and Ollama are running.' },
+        { id: generateMsgId(), role: 'aria', text: "Still couldn't connect to the AI.", hint: 'Check that the API server and Ollama are running.' },
       ])
     } finally {
       setLoading(false)
@@ -646,7 +713,14 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
     if (isNaN(value)) return
     
     const field = pendingTemplate.requires_input.field
-    const isB2B = profile?.customer_profile?.customer_type === 'B2B'
+    
+    // Validate hours_extension: must be a positive integer
+    if (field === 'hours_extension') {
+      if (value <= 0 || !Number.isInteger(value)) {
+        alert('Extended hours must be a positive whole number (e.g., 1, 2, 3)')
+        return
+      }
+    }
     
     let scenarioName: string
     let description: string
@@ -681,19 +755,23 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
     setHasStartedConversation(true)
     
     // Add user message showing selected scenario
+    const userMsg = `Run simulation: ${s.scenario_name}`
     setMessages(p => [...p, { 
-      id: msgId++, 
+      id: generateMsgId(), 
       role: 'user', 
-      text: `Run simulation: ${s.scenario_name}` 
+      text: userMsg
     }])
+    persistMessage('user', userMsg)
     
     // Add ARIA confirmation message
+    const ariaMsg = `Starting simulation for "${s.scenario_name}"…\n${s.description || ''}`
     setMessages(p => [...p, { 
-      id: msgId++, 
+      id: generateMsgId(), 
       role: 'aria', 
       text: `Starting simulation for "${s.scenario_name}"…`,
       hint: s.description
     }])
+    persistMessage('aria', ariaMsg)
     
     // Attach business_profile (including customer_profile) to scenario
     const scenarioWithProfile = {
@@ -736,12 +814,17 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
     })
   }
 
-  // Handler: user selects a template to start Q&A
-  const handleSelectTemplate = async (templateId: string) => {
+  // Handler: user selects a template to start Q&A (or updates an existing spark)
+  const handleSelectTemplate = async (templateId: string, existingSparkId?: string) => {
     const userId = userIdRef.current
     if (!userId) return
     try {
-      const spark = await api.createSpark({ user_id: userId, template_id: templateId })
+      // If updating an existing spark, use that; otherwise create a new one
+      const spark = existingSparkId
+        ? savedSparks.find(s => s.spark_id === existingSparkId)
+        : await api.createSpark({ user_id: userId, template_id: templateId })
+      
+      if (!spark) return
 
       // Fetch templates to get the first question text
       const templatesResult = await api.fetchSparkTemplates()
@@ -755,19 +838,22 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
       setSparkQAMode('answering')
       setSparkQATotalQuestions(template.questions.length)
       setSparkQACurrentIndex(0)
+      setIsUpdatingExistingSpark(!!existingSparkId) // Track if we're updating
 
       // Append ARIA message with first question
       setMessages(p => [...p, {
-        id: msgId++,
+        id: generateMsgId(),
         role: 'aria',
         text: `Question 1 of ${template.questions.length}: ${firstQuestion.text}`,
       }])
 
-      // Update saved sparks list
-      setSavedSparks(prev => [spark, ...prev])
+      // Update saved sparks list only if it's a new spark
+      if (!existingSparkId) {
+        setSavedSparks(prev => [spark, ...prev])
+      }
     } catch {
       setMessages(p => [...p, {
-        id: msgId++, role: 'aria',
+        id: generateMsgId(), role: 'aria',
         text: "Sorry, I couldn't start the Spark Q&A. Please try again.",
       }])
     }
@@ -776,13 +862,77 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
   // Handler: activate a spark for this session
   const handleActivateSpark = async (sparkId: string) => {
     const userId = userIdRef.current
-    if (!userId || !chatSessionRef.current) return
+    if (!userId) {
+      console.error('[Spark] Cannot activate: no userId')
+      return
+    }
+    
+    // Ensure we have a chat session by persisting a system message if needed
+    if (!chatSessionRef.current) {
+      console.log('[Spark] Creating chat session before activation...')
+      try {
+        const res = await fetch(`${API_BASE}/api/chat/message`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: userId,
+            profile_id: profile?.id,
+            session_id: null,
+            role: 'aria',
+            content: 'Session initialized for spark activation.',
+            metadata: { type: 'system', hidden: true },
+          }),
+        })
+        const data = await res.json()
+        if (data.session_id) {
+          chatSessionRef.current = data.session_id
+          console.log('[Spark] Session created:', data.session_id)
+        } else {
+          throw new Error('No session_id returned')
+        }
+      } catch (err) {
+        console.error('[Spark] Failed to create session:', err)
+        setMessages(p => [...p, {
+          id: generateMsgId(),
+          role: 'aria',
+          text: "Sorry, I couldn't activate the spark. Please try sending a message first to start a session.",
+        }])
+        return
+      }
+    }
+    
+    // At this point we should have a session
+    const sessionId = chatSessionRef.current
+    if (!sessionId) {
+      console.error('[Spark] No session ID after initialization')
+      setMessages(p => [...p, {
+        id: generateMsgId(),
+        role: 'aria',
+        text: "Sorry, I couldn't activate the spark. Please try again.",
+      }])
+      return
+    }
+    
     try {
-      await api.activateSpark(sparkId, { user_id: userId, session_id: chatSessionRef.current })
+      console.log('[Spark] Activating spark:', sparkId, 'for session:', sessionId)
+      await api.activateSpark(sparkId, { user_id: userId, session_id: sessionId })
       const spark = savedSparks.find(s => s.spark_id === sparkId) || null
       setActiveSpark(spark)
-    } catch {
-      // Silently fail or show toast
+      console.log('[Spark] Activation successful')
+      
+      // Show confirmation message
+      setMessages(p => [...p, {
+        id: generateMsgId(),
+        role: 'aria',
+        text: `✨ "${spark?.name || 'Spark'}" is now active for this session!`,
+      }])
+    } catch (err) {
+      console.error('[Spark] Activation failed:', err)
+      setMessages(p => [...p, {
+        id: generateMsgId(),
+        role: 'aria',
+        text: "Sorry, I couldn't activate the spark. Please try again.",
+      }])
     }
   }
 
@@ -796,15 +946,59 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
     } catch {}
   }
 
-  // Handler: delete a spark
-  const handleDeleteSpark = async (sparkId: string) => {
-    const userId = userIdRef.current
-    if (!userId) return
-    try {
-      await api.deleteSpark(sparkId, userId)
-      setSavedSparks(prev => prev.filter(s => s.spark_id !== sparkId))
-      if (activeSpark?.spark_id === sparkId) setActiveSpark(null)
-    } catch {}
+  // Handler: update (re-open) a spark to edit its answers
+  const handleUpdateSpark = async (sparkId: string) => {
+    // Find the spark
+    const spark = savedSparks.find(s => s.spark_id === sparkId)
+    if (!spark) return
+    
+    // Close settings and trigger the Q&A flow with the existing spark
+    setSettingsOpen(false)
+    
+    // Add ARIA message to start updating
+    const ariaIntro: Message = {
+      id: generateMsgId(),
+      role: 'aria',
+      text: `Let's update your "${spark.name}" context. I'll ask you the questions again, and you can provide updated answers. (Type "cancel" at any time to stop updating)`,
+    }
+    setMessages(prev => [...prev, ariaIntro])
+    
+    // Start the Q&A flow for this spark (it will reload the questions)
+    handleSelectTemplate(spark.template_id, sparkId)
+  }
+
+  // Handler: cancel spark Q&A flow
+  const handleCancelSparkQA = async () => {
+    const wasUpdating = isUpdatingExistingSpark
+    const sparkId = sparkQASparkId
+    
+    // Reset Q&A state
+    setSparkQAMode('idle')
+    setSparkQASparkId(null)
+    setSparkQATotalQuestions(0)
+    setSparkQACurrentIndex(0)
+    setIsUpdatingExistingSpark(false)
+    
+    // If creating a new spark (not updating), delete the draft
+    if (!wasUpdating && sparkId) {
+      const userId = userIdRef.current
+      if (userId) {
+        try {
+          await api.deleteSpark(sparkId, userId)
+          setSavedSparks(prev => prev.filter(s => s.spark_id !== sparkId))
+        } catch {
+          // Silently fail - spark may already be deleted
+        }
+      }
+    }
+    
+    setMessages(p => [...p, {
+      id: generateMsgId(),
+      role: 'aria',
+      text: wasUpdating 
+        ? "Update cancelled. Your spark's previous answers are preserved."
+        : "Spark creation cancelled.",
+    }])
   }
 
   return (
@@ -899,92 +1093,17 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
                 {/* Saved sparks */}
                 {savedSparks.length > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                    {savedSparks.map(spark => {
-                      const isActive = activeSpark?.spark_id === spark.spark_id
-                      const isDisabled = simulationStatus === 'running' || simulationStatus === 'paused'
-                      return (
-                        <div
-                          key={spark.spark_id}
-                          style={{
-                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            padding: '0.5rem 0.65rem',
-                            borderRadius: 6,
-                            border: `1.5px solid ${isActive ? 'var(--accent)' : 'var(--gray-200)'}`,
-                            background: 'transparent',
-                          }}
-                        >
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem', flex: 1, minWidth: 0 }}>
-                            <span style={{
-                              fontSize: '0.78rem', fontWeight: isActive ? 700 : 600,
-                              color: isActive ? 'var(--accent)' : 'var(--gray-800)',
-                              display: 'flex', alignItems: 'center', gap: '0.35rem',
-                            }}>
-                              {isActive && (
-                                <span style={{
-                                  display: 'inline-block', width: 6, height: 6,
-                                  borderRadius: '50%', background: 'var(--accent)', flexShrink: 0,
-                                }} />
-                              )}
-                              {spark.name}
-                            </span>
-                            <span style={{ fontSize: '0.68rem', color: 'var(--gray-400)', textTransform: 'capitalize' }}>
-                              {spark.status === 'completed' ? 'Ready' : spark.status === 'in_progress' ? 'In progress' : 'Draft'}
-                            </span>
-                          </div>
-                          <div style={{ display: 'flex', gap: '0.3rem', flexShrink: 0 }}>
-                            {isActive ? (
-                              <button
-                                onClick={() => !isDisabled && handleDeactivateSpark()}
-                                disabled={isDisabled}
-                                title="Deactivate spark"
-                                style={{
-                                  padding: '0.2rem 0.5rem', borderRadius: 4, fontSize: '0.7rem',
-                                  fontWeight: 600, border: '1px solid var(--accent)',
-                                  background: 'transparent', color: 'var(--accent)',
-                                  cursor: isDisabled ? 'not-allowed' : 'pointer',
-                                  opacity: isDisabled ? 0.5 : 1,
-                                }}
-                              >
-                                Deactivate
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => !isDisabled && handleActivateSpark(spark.spark_id)}
-                                disabled={isDisabled}
-                                title="Activate spark"
-                                style={{
-                                  padding: '0.2rem 0.5rem', borderRadius: 4, fontSize: '0.7rem',
-                                  fontWeight: 600, border: '1px solid var(--gray-300)',
-                                  background: 'white', color: 'var(--gray-700)',
-                                  cursor: isDisabled ? 'not-allowed' : 'pointer',
-                                  opacity: isDisabled ? 0.5 : 1,
-                                }}
-                              >
-                                Activate
-                              </button>
-                            )}
-                            <button
-                              onClick={() => !isDisabled && handleDeleteSpark(spark.spark_id)}
-                              disabled={isDisabled}
-                              title="Delete spark"
-                              style={{
-                                width: 26, height: 26, borderRadius: 4,
-                                border: '1px solid var(--gray-200)', background: 'white',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                cursor: isDisabled ? 'not-allowed' : 'pointer',
-                                opacity: isDisabled ? 0.5 : 1, color: 'var(--gray-400)',
-                              }}
-                              aria-label="Delete spark"
-                            >
-                              <svg style={{ width: 12, height: 12 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
-                                <path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/>
-                              </svg>
-                            </button>
-                          </div>
-                        </div>
-                      )
-                    })}
+                    {savedSparks.map(spark => (
+                      <SparkCard
+                        key={spark.spark_id}
+                        spark={spark}
+                        isActive={activeSpark?.spark_id === spark.spark_id}
+                        isDisabled={simulationStatus === 'running' || simulationStatus === 'paused'}
+                        onActivate={() => handleActivateSpark(spark.spark_id)}
+                        onDeactivate={handleDeactivateSpark}
+                        onUpdate={() => handleUpdateSpark(spark.spark_id)}
+                      />
+                    ))}
                   </div>
                 )}
 
@@ -1309,6 +1428,9 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
               placeholder={pendingTemplate.requires_input.placeholder}
               autoFocus
               onKeyDown={e => { if (e.key === 'Enter') handleInputPromptSubmit() }}
+              // Add validation attributes for hours_extension
+              min={pendingTemplate.requires_input.field === 'hours_extension' ? 1 : undefined}
+              step={pendingTemplate.requires_input.field === 'hours_extension' ? 1 : undefined}
               style={{
                 width: '100%', padding: '0.5rem 0.75rem', borderRadius: 6,
                 border: '1px solid var(--gray-300)', fontSize: '0.85rem',
@@ -1361,6 +1483,51 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, sim
             <span style={{ fontSize: '0.8rem', color: 'var(--gray-600)' }}>
               {simulationStatus === 'running' ? 'Simulation running...' : 'Simulation paused'}
             </span>
+          </div>
+        )}
+
+        {/* Spark Q&A in progress indicator with cancel button */}
+        {sparkQAMode === 'answering' && (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '0.75rem',
+            background: 'rgba(99, 102, 241, 0.05)',
+            borderRadius: 8,
+            border: '1.5px solid var(--accent)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <svg style={{ width: 16, height: 16, color: 'var(--accent)' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+              </svg>
+              <span style={{ fontSize: '0.8rem', color: 'var(--gray-700)', fontWeight: 600 }}>
+                {isUpdatingExistingSpark ? 'Updating spark' : 'Creating spark'} — Question {sparkQACurrentIndex + 1} of {sparkQATotalQuestions}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleCancelSparkQA}
+              style={{
+                padding: '0.3rem 0.6rem',
+                fontSize: '0.7rem',
+                fontWeight: 600,
+                borderRadius: 4,
+                border: '1px solid var(--gray-300)',
+                background: 'white',
+                color: 'var(--gray-700)',
+                cursor: 'pointer',
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.borderColor = '#dc2626'
+                e.currentTarget.style.color = '#dc2626'
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.borderColor = 'var(--gray-300)'
+                e.currentTarget.style.color = 'var(--gray-700)'
+              }}
+            >
+              Cancel
+            </button>
           </div>
         )}
 
@@ -1561,6 +1728,130 @@ function ScenarioChip({ scenario, onClick }: { scenario: Scenario; onClick: () =
   )
 }
 
+// ── SparkCard ─────────────────────────────────────────────────────────────────
+// Individual spark card with activation toggle and update button
+
+interface SparkCardProps {
+  spark: SparkRecord
+  isActive: boolean
+  isDisabled: boolean
+  onActivate: () => void
+  onDeactivate: () => void
+  onUpdate: () => void
+}
+
+function SparkCard({ spark, isActive, isDisabled, onActivate, onDeactivate, onUpdate }: SparkCardProps) {
+  const [hoverActivateBtn, setHoverActivateBtn] = useState(false)
+  
+  return (
+    <div
+      style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '0.5rem 0.65rem',
+        borderRadius: 6,
+        border: `1.5px solid ${isActive ? '#15803d' : 'var(--gray-200)'}`,
+        background: 'transparent',
+      }}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem', flex: 1, minWidth: 0 }}>
+        <span style={{
+          fontSize: '0.78rem', fontWeight: isActive ? 700 : 600,
+          color: isActive ? '#15803d' : 'var(--gray-800)',
+          display: 'flex', alignItems: 'center', gap: '0.35rem',
+        }}>
+          {isActive && (
+            <span style={{
+              display: 'inline-block', width: 6, height: 6,
+              borderRadius: '50%', background: '#15803d', flexShrink: 0,
+            }} />
+          )}
+          {spark.name}
+        </span>
+        <span style={{ fontSize: '0.68rem', color: 'var(--gray-400)', textTransform: 'capitalize' }}>
+          {spark.status === 'completed' ? 'Ready' : spark.status === 'in_progress' ? 'In progress' : 'Draft'}
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: '0.3rem', flexShrink: 0 }}>
+        {isActive ? (
+          <button
+            onMouseEnter={() => setHoverActivateBtn(true)}
+            onMouseLeave={() => setHoverActivateBtn(false)}
+            onClick={() => !isDisabled && onDeactivate()}
+            disabled={isDisabled}
+            title={hoverActivateBtn ? "Click to deactivate" : "Currently activated"}
+            style={{
+              padding: '0.3rem 0.65rem', 
+              borderRadius: 4, 
+              fontSize: '0.7rem',
+              fontWeight: 600,
+              minWidth: '80px', // Fixed width to prevent size changes
+              border: `1.5px solid ${hoverActivateBtn ? '#dc2626' : '#15803d'}`,
+              background: hoverActivateBtn ? '#fecaca' : '#bbf7d0', // Lighter colors
+              color: hoverActivateBtn ? '#991b1b' : '#15803d', // Darker text for contrast
+              cursor: isDisabled ? 'not-allowed' : 'pointer',
+              opacity: isDisabled ? 0.5 : 1,
+              transition: 'background-color 0.2s ease, color 0.2s ease',
+            }}
+          >
+            {hoverActivateBtn ? 'Deactivate' : 'Activated'}
+          </button>
+        ) : (
+          <button
+            onClick={() => !isDisabled && onActivate()}
+            disabled={isDisabled || spark.status !== 'completed'}
+            title={spark.status !== 'completed' ? 'Complete all questions first' : 'Activate spark'}
+            style={{
+              padding: '0.3rem 0.65rem', 
+              borderRadius: 4, 
+              fontSize: '0.7rem',
+              fontWeight: 600,
+              minWidth: '80px', // Fixed width matching the active state
+              border: '1.5px solid var(--gray-300)',
+              background: 'white', 
+              color: 'var(--gray-700)',
+              cursor: (isDisabled || spark.status !== 'completed') ? 'not-allowed' : 'pointer',
+              opacity: (isDisabled || spark.status !== 'completed') ? 0.5 : 1,
+            }}
+          >
+            Activate
+          </button>
+        )}
+        <button
+          onClick={() => !isDisabled && onUpdate()}
+          disabled={isDisabled}
+          title="Update spark answers"
+          style={{
+            width: 26, height: 26, borderRadius: 4,
+            border: '1px solid var(--gray-200)', background: 'white',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: isDisabled ? 'not-allowed' : 'pointer',
+            opacity: isDisabled ? 0.5 : 1, color: 'var(--gray-500)',
+            transition: 'all 0.15s ease',
+          }}
+          onMouseEnter={e => {
+            if (!isDisabled) {
+              e.currentTarget.style.color = 'var(--accent)'
+              e.currentTarget.style.borderColor = 'var(--accent)'
+            }
+          }}
+          onMouseLeave={e => {
+            if (!isDisabled) {
+              e.currentTarget.style.color = 'var(--gray-500)'
+              e.currentTarget.style.borderColor = 'var(--gray-200)'
+            }
+          }}
+          aria-label="Update spark"
+        >
+          <svg style={{ width: 13, height: 13 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── SparkTemplateCards ────────────────────────────────────────────────────────
 // Shown inside the Settings drawer. Fetches templates, lets the user read about
 // each one, then confirms before starting the Q&A flow in the chat.
@@ -1701,3 +1992,4 @@ function SparkTemplateCards({ existingSparkTemplateIds, disabled, onConfirm }: S
     </div>
   )
 }
+

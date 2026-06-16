@@ -13,7 +13,6 @@ OWASP references:
 
 import re
 import logging
-from typing import Optional
 from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse
 from slowapi import Limiter

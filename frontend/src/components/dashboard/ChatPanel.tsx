@@ -136,6 +136,11 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
   const feedRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const latestReportRef = useRef<any>(null)
+  // Snapshot of the live chat (messages + report) saved when viewing history,
+  // so we can restore the live chat when the user returns to the current simulation
+  const liveChatSnapshotRef = useRef<{ messages: Message[]; report: any } | null>(null)
+  // Tracks whether the user is currently viewing a past simulation (history)
+  const viewingHistoryRef = useRef(false)
 
   // Spark Q&A state
   const [sparkQAMode, setSparkQAMode] = useState<SparkQAMode>('idle')
@@ -295,6 +300,22 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
           y += analysisLines.length * 5 + 8
         }
 
+        // Key reasons for skip/churn
+        const keyReasons = report.key_reasons || []
+        if (keyReasons.length > 0) {
+          doc.setFontSize(13)
+          doc.setTextColor(0)
+          doc.text('Key Reasons for Skip/Churn', margin, y); y += 8
+          doc.setFontSize(10)
+          doc.setTextColor(60)
+          keyReasons.forEach((r: string, i: number) => {
+            const reasonLines = doc.splitTextToSize(`${i + 1}. ${r}`, 175)
+            doc.text(reasonLines, margin + 4, y)
+            y += reasonLines.length * 5 + 3
+          })
+          y += 4
+        }
+
         doc.setFontSize(13)
         doc.setTextColor(0)
         doc.text('Recommendations', margin, y); y += 8
@@ -342,6 +363,9 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
       if (abortRef.current) { abortRef.current.abort(); abortRef.current = null }
       // Clear cached agent personalities so next simulation generates fresh ones
       fetch(`${API_BASE}/api/simulation/cache/clear`, { method: 'POST' }).catch(() => {})
+      // Reset history-viewing state and any saved live chat snapshot
+      viewingHistoryRef.current = false
+      liveChatSnapshotRef.current = null
       setMessages([{
         id: generateMsgId(), role: 'aria',
         text: "Hi! I'm ARIA. Tell me about a business scenario you'd like to simulate.",
@@ -362,6 +386,12 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
     // so __ariaRestoreMessages can fill it without the welcome screen flashing
     ;(window as any).__ariaClearForRestore = () => {
       if (abortRef.current) { abortRef.current.abort(); abortRef.current = null }
+      // Only mark as viewing history if there's a live snapshot to protect
+      // (i.e., a simulation was running/completed). This prevents blocking
+      // the injectRestoredReport call that intentionally displays in the history view.
+      if (liveChatSnapshotRef.current) {
+        viewingHistoryRef.current = true
+      }
       setMessages([])
       setScenarios([])
       setHasStartedConversation(true)
@@ -396,7 +426,14 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
                   `<div style="font-size:0.8rem;">• ${level}: ${data.visit_pct}% visit, ${data.skip_pct}% skip, ${data.churn_pct}% churn</div>`
                 ).join('')}
               </div>
+              ${report.analysis ? `<div style="background:var(--gray-50);padding:0.5rem;border-radius:6px;border-left:3px solid var(--accent);">
+                <div style="font-weight:600;font-size:0.8rem;margin-bottom:0.2rem;">Analysis:</div>
+                <div style="font-size:0.8rem;color:var(--gray-700);">${report.analysis}</div>
+              </div>` : ''}
+              ${(report.key_reasons || []).length > 0 ? `<div><div style="font-weight:600;margin-bottom:0.5rem;">Key Reasons for Skip/Churn:</div>
+                ${report.key_reasons.map((r: string, i: number) => `<div style="font-size:0.8rem;margin-bottom:0.5rem;padding-left:0.5rem;border-left:2px solid var(--accent);">${i + 1}. ${r}</div>`).join('')}</div>` : ''}
               ${recs.length > 0 ? `<div><div style="font-weight:600;margin-bottom:0.5rem;">Recommendations:</div>${recs.map((r: string) => `<div style="font-size:0.8rem;margin-bottom:0.5rem;padding-left:0.5rem;border-left:2px solid var(--accent);">${r.replace(/\*\*/g, '')}</div>`).join('')}</div>` : ''}
+              ${report.disclaimer ? `<div style="font-size:0.7rem;color:var(--gray-400);font-style:italic;margin-top:0.25rem;">${report.disclaimer}</div>` : ''}
               <button id="download-report-btn" style="margin-top:0.5rem;padding:0.4rem 0.75rem;border-radius:6px;background:var(--accent);color:#fff;border:none;font-size:0.78rem;font-weight:600;cursor:pointer;">📄 Download PDF</button>
             </div>`
             // Store in ref so PDF download works
@@ -414,10 +451,32 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
       setHasStartedConversation(true)
     }
 
+    // Snapshot the current live chat before viewing history (so we can return to it)
+    ;(window as any).__ariaSnapshotLiveChat = () => {
+      setMessages(prev => {
+        liveChatSnapshotRef.current = { messages: prev, report: latestReportRef.current }
+        return prev
+      })
+      viewingHistoryRef.current = true
+    }
+
+    // Restore the live chat after viewing history
+    ;(window as any).__ariaRestoreLiveChat = () => {
+      viewingHistoryRef.current = false
+      const snap = liveChatSnapshotRef.current
+      if (snap) {
+        setMessages(snap.messages)
+        latestReportRef.current = snap.report
+        setHasStartedConversation(true)
+      }
+    }
+
     return () => {
       delete (window as any).__ariaNewChat
       delete (window as any).__ariaClearForRestore
       delete (window as any).__ariaRestoreMessages
+      delete (window as any).__ariaSnapshotLiveChat
+      delete (window as any).__ariaRestoreLiveChat
     }
   }, [onReset])
 
@@ -454,6 +513,11 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
               <div style="font-size:0.8rem;color:var(--gray-700);">${report.analysis}</div>
             </div>` : ''}
             
+            ${report.key_reasons && report.key_reasons.length > 0 ? `<div>
+              <div style="font-weight:600;margin-bottom:0.5rem;">Key Reasons for Skip/Churn:</div>
+              ${report.key_reasons.map((r: string, i: number) => `<div style="font-size:0.8rem;margin-bottom:0.5rem;padding-left:0.5rem;border-left:2px solid var(--accent);">${i + 1}. ${r}</div>`).join('')}
+            </div>` : ''}
+            
             <div>
               <div style="font-weight:600;margin-bottom:0.5rem;">Recommendations:</div>
               ${recs.map((r: string) => `<div style="font-size:0.8rem;margin-bottom:0.5rem;padding-left:0.5rem;border-left:2px solid var(--accent);">${r.replace(/\*\*/g, '')}</div>`).join('')}
@@ -463,17 +527,32 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
             <button id="download-report-btn" style="margin-top:0.5rem;padding:0.4rem 0.75rem;border-radius:6px;background:var(--accent);color:#fff;border:none;font-size:0.78rem;font-weight:600;cursor:pointer;">📄 Download PDF</button>
           </div>`
           
-          setMessages(p => [...p, {
-            id: generateMsgId(),
-            role: 'aria',
-            text: reportHtml,
-          }])
+          setMessages(p => {
+            const reportMsg = {
+              id: generateMsgId(),
+              role: 'aria' as const,
+              text: reportHtml,
+            }
+            // If the user is viewing history, append to the live snapshot instead
+            // of the currently-displayed history view
+            if (viewingHistoryRef.current && liveChatSnapshotRef.current) {
+              liveChatSnapshotRef.current = {
+                messages: [...liveChatSnapshotRef.current.messages, reportMsg],
+                report,
+              }
+              return p  // don't touch the displayed history view
+            }
+            return [...p, reportMsg]
+          })
           
           // Persist report to chat history
           persistMessage('aria', 'Simulation report generated', { report })
           
           // Store report in ref for the event delegation handler
-          latestReportRef.current = report
+          // (only update live ref if not viewing history)
+          if (!viewingHistoryRef.current) {
+            latestReportRef.current = report
+          }
           
           // Mark that a simulation has been completed in this chat session
           setSimulationRanInSession(true)
@@ -751,6 +830,9 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
   }
 
   function launchScenario(s: Scenario) {
+    // Starting a fresh simulation — no longer viewing history
+    viewingHistoryRef.current = false
+    liveChatSnapshotRef.current = null
     // Mark that user has started conversation
     setHasStartedConversation(true)
     

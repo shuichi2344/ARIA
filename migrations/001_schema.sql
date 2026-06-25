@@ -86,6 +86,7 @@ CREATE TABLE public.simulation_reports (
   archetype_breakdown jsonb NOT NULL,
   recommendations jsonb NOT NULL,
   analysis text,
+  key_reasons jsonb DEFAULT NULL,
   monte_carlo_summary jsonb DEFAULT NULL,
   created_at timestamp without time zone DEFAULT now(),
   CONSTRAINT simulation_reports_pkey PRIMARY KEY (report_id),

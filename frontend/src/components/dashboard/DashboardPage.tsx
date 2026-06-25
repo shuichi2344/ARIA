@@ -55,23 +55,37 @@ export default function DashboardPage({ session }: Props) {
   // Fallback for old simulations that have no saved session_id:
   // inject the report card directly into chat so something is visible
   function injectRestoredReport(snap: typeof sim.history[0]) {
-    if (!snap.report || !(window as any).__ariaAddCompletionMessage) return
+    if (!snap.report || !(window as any).__ariaRestoreMessages) return
     const r = snap.report
-    ;(window as any).__ariaAddCompletionMessage(`Restored: "${snap.scenarioName}"`, {
-      risk_summary: {
-        risk_level:        r.risk_level,
-        churn_rate:        r.churn_rate,
-        visit_rate:        r.visit_rate,
-        estimated_revenue: r.estimated_revenue,
-        total_agents:      r.total_agents,
+    // Use __ariaRestoreMessages with all messages including report metadata
+    // so it renders as a rich card (bypasses __ariaAddCompletionMessage which 
+    // is guarded by viewingHistoryRef)
+    ;(window as any).__ariaRestoreMessages([
+      { role: 'user', content: `Run simulation: ${snap.scenarioName}` },
+      { role: 'aria', content: `Starting simulation for "${snap.scenarioName}"…\n${snap.description || ''}` },
+      {
+        role: 'aria',
+        content: `Restored: "${snap.scenarioName}"`,
+        metadata: {
+          report: {
+            risk_summary: {
+              risk_level:        r.risk_level,
+              churn_rate:        r.churn_rate,
+              visit_rate:        r.visit_rate,
+              estimated_revenue: r.estimated_revenue,
+              total_agents:      r.total_agents,
+            },
+            archetype_breakdown: r.archetype_breakdown,
+            breakdown_type:      'income',
+            recommendations:     r.recommendations,
+            analysis:            r.analysis || '',
+            key_reasons:         r.key_reasons || [],
+            disclaimer:          "Revenue is estimated from your business price range, adjusted by the scenario's price change.",
+            scenario:            { name: snap.scenarioName, description: snap.description },
+          },
+        },
       },
-      archetype_breakdown: r.archetype_breakdown,
-      breakdown_type:      'income',
-      recommendations:     r.recommendations,
-      analysis:            r.analysis || '',
-      disclaimer:          "Revenue is estimated from your business price range, adjusted by the scenario's price change.",
-      scenario:            { name: snap.scenarioName, description: snap.description },
-    })
+    ])
   }
 
   // Progress based on how many agents have made decisions
@@ -88,13 +102,21 @@ export default function DashboardPage({ session }: Props) {
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
         history={sim.history}
-        currentSimName={sim.scenarioName || undefined}
+        currentSimName={sim.liveScenarioName || undefined}
         currentSimStatus={sim.status !== 'idle' ? sim.status : undefined}
         onGoToCurrent={() => {
           // Resume viewing the live/current simulation
           sim.resumeLive()
+          // Restore the live chat panel that was snapshotted when viewing history
+          if ((window as any).__ariaRestoreLiveChat) (window as any).__ariaRestoreLiveChat()
         }}
         onRestore={snap => {
+          // Always snapshot the live chat before switching to history view
+          // so we can restore it when the user goes back to current
+          if (!sim.isRestoredFromHistory) {
+            if ((window as any).__ariaSnapshotLiveChat) (window as any).__ariaSnapshotLiveChat()
+          }
+
           sim.restoreSnapshot(snap)
 
           // Signal chat to clear and prepare for restored content
@@ -103,23 +125,19 @@ export default function DashboardPage({ session }: Props) {
           // Always show the scenario prompt + report directly.
           // Don't fetch full session messages — sessions can contain multiple sims
           // which causes mixed/confusing conversation threads.
-          if ((window as any).__ariaAddCompletionMessage && snap.report) {
-            // Show user prompt and report
-            if ((window as any).__ariaRestoreMessages) {
+          if ((window as any).__ariaRestoreMessages) {
+            if (snap.report) {
+              // Inject prompt + report as a single batch via injectRestoredReport
+              injectRestoredReport(snap)
+            } else {
+              // No report — just show the scenario prompt
               ;(window as any).__ariaRestoreMessages([
                 { role: 'user', content: `Run simulation: ${snap.scenarioName}` },
-                { role: 'aria', content: `Starting simulation for "${snap.scenarioName}"…\n${snap.description || ''}` },
+                { role: 'aria', content: snap.description
+                  ? `Starting simulation for "${snap.scenarioName}"…\n${snap.description}`
+                  : `Simulation: "${snap.scenarioName}" (no report available for this run)` },
               ])
             }
-            setTimeout(() => injectRestoredReport(snap), 50)
-          } else if ((window as any).__ariaRestoreMessages) {
-            // No report — just show the scenario prompt
-            ;(window as any).__ariaRestoreMessages([
-              { role: 'user', content: `Run simulation: ${snap.scenarioName}` },
-              { role: 'aria', content: snap.description
-                ? `Starting simulation for "${snap.scenarioName}"…\n${snap.description}`
-                : `Simulation: "${snap.scenarioName}" (no report available for this run)` },
-            ])
           }
 
           setHistoryOpen(false)
@@ -278,7 +296,7 @@ export default function DashboardPage({ session }: Props) {
             const displayName     = tabSim ? tabSim.scenarioName : sim.scenarioName
 
             // For restored history items shown in the summary panel
-            const showRestoredSummary = sim.isRestoredFromHistory && sim.status === 'done' && sim.restoredReport && sim.completedSims.length === 0
+            const showRestoredSummary = sim.isRestoredFromHistory && sim.restoredReport && sim.completedSims.length === 0
 
             return (
             <div style={{
@@ -345,7 +363,7 @@ export default function DashboardPage({ session }: Props) {
                     {displayName || '—'}
                   </span>
                   {/* Monte Carlo badge — shows live run progress and convergence */}
-                  {sim.monteCarloState && (
+                  {sim.monteCarloState && !sim.isRestoredFromHistory && (
                     <MonteCarloBadge mc={sim.monteCarloState} />
                   )}
                 </div>
@@ -660,6 +678,38 @@ function RestoredSummaryPanel({ report, description }: { report: SimReport; desc
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Analysis */}
+      {report.analysis && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+          <p style={{ margin: 0, fontSize: '0.72rem', fontWeight: 700, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Analysis
+          </p>
+          <div style={{
+            fontSize: '0.8rem', color: 'var(--gray-700)', lineHeight: 1.5,
+            padding: '0.5rem 0.6rem', borderRadius: 6,
+            background: 'var(--gray-50)', borderLeft: '3px solid var(--accent)',
+          }}>
+            {report.analysis}
+          </div>
+        </div>
+      )}
+
+      {/* Key reasons for skip/churn */}
+      {report.key_reasons && report.key_reasons.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+          <p style={{ margin: 0, fontSize: '0.72rem', fontWeight: 700, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Key Reasons for Skip/Churn
+          </p>
+          <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.3rem', listStyle: 'none' }}>
+            {report.key_reasons.map((reason, i) => (
+              <li key={i} style={{ fontSize: '0.8rem', color: 'var(--gray-700)', lineHeight: 1.5 }}>
+                {i + 1}. {reason}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

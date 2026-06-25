@@ -2517,9 +2517,10 @@ async def _finalize_simulation(sim_id: str, run_metrics: Dict[str, Any], llm_bra
     else:
         risk_level = "Low"
     
-    # Generate LLM analysis and recommendations
+    # Generate LLM analysis, key reasons, and recommendations (single call)
     recommendations = []
     analysis_explanation = ""
+    key_reasons = []
     try:
         reasoning_samples = []
         for mesa_agent in mesa_agents:
@@ -2554,24 +2555,53 @@ Results:
 {breakdown_text}
 
 Sample customer reasoning (those who skipped or churned):
-{chr(10).join(reasoning_samples[:5]) if reasoning_samples else "None - all customers visited."}
+{chr(10).join(reasoning_samples[:10]) if reasoning_samples else "None - all customers visited."}
 
 Respond in this EXACT format:
 
 ANALYSIS:
 [Write 2-3 sentences explaining WHY customers reacted this way. What patterns do you see? Which {"income segments" if is_price_scenario else "personality types/lifestyles"} are most affected and why? Be specific about the numbers.]
 
+KEY REASONS:
+1. [Top reason customers skipped or churned - one concise sentence]
+2. [Second most common reason - one concise sentence]
+3. [Third reason - one concise sentence]
+
 RECOMMENDATIONS:
 1. [actionable recommendation]
 2. [actionable recommendation]
 3. [actionable recommendation]"""
 
-        rec_response = await llm_brain.client.generate(prompt=rec_prompt, temperature=0.7, max_tokens=700)
+        rec_response = await llm_brain.client.generate(prompt=rec_prompt, temperature=0.7, max_tokens=900)
         rec_text = _clean_response(rec_response['response'])
         
-        if 'ANALYSIS:' in rec_text and 'RECOMMENDATIONS:' in rec_text:
+        # Parse the three sections
+        if 'ANALYSIS:' in rec_text and 'KEY REASONS:' in rec_text and 'RECOMMENDATIONS:' in rec_text:
+            # Split into sections
+            after_analysis = rec_text.split('KEY REASONS:')
+            analysis_part = after_analysis[0].replace('ANALYSIS:', '').strip()
+            after_reasons = after_analysis[1].split('RECOMMENDATIONS:')
+            reasons_part = after_reasons[0].strip()
+            recs_part = after_reasons[1].strip()
+            
+            analysis_explanation = analysis_part.replace('**', '')
+            
+            # Parse key reasons
+            for line in reasons_part.split('\n'):
+                line = line.strip()
+                if line and line[0].isdigit():
+                    cleaned = line.lstrip('0123456789').lstrip('.)')
+                    cleaned = cleaned.strip().replace('**', '')
+                    if cleaned:
+                        key_reasons.append(cleaned)
+            key_reasons = key_reasons[:3]
+            
+            # Parse recommendations
+            recommendations = [line.strip() for line in recs_part.split('\n') if line.strip() and line.strip()[0].isdigit()]
+        elif 'ANALYSIS:' in rec_text and 'RECOMMENDATIONS:' in rec_text:
+            # Fallback: no KEY REASONS section found
             parts = rec_text.split('RECOMMENDATIONS:')
-            analysis_part = parts[0].replace('ANALYSIS:', '').strip()
+            analysis_part = parts[0].replace('ANALYSIS:', '').replace('KEY REASONS:', '').strip()
             recs_part = parts[1].strip()
             analysis_explanation = analysis_part.replace('**', '')
             recommendations = [line.strip() for line in recs_part.split('\n') if line.strip() and line.strip()[0].isdigit()]
@@ -2580,8 +2610,10 @@ RECOMMENDATIONS:
         
         if not recommendations:
             recommendations = [rec_text.replace('**', '')]
+        
+        print(f"✓ Analysis, key reasons ({len(key_reasons)}), and recommendations generated")
     except Exception as e:
-        print(f"⚠ Failed to generate recommendations: {e}")
+        print(f"⚠ Failed to generate analysis: {e}")
         recommendations = ["Consider monitoring customer feedback closely after implementing this change."]
     
     # Build report object
@@ -2657,6 +2689,7 @@ RECOMMENDATIONS:
         },
         "recommendations": recommendations,
         "analysis": analysis_explanation,
+        "key_reasons": key_reasons,
         "disclaimer": disclaimer,
     }
     

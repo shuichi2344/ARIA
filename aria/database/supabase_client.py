@@ -582,6 +582,7 @@ class SupabaseClient:
             "archetype_breakdown": report["archetype_breakdown"],
             "recommendations": report["recommendations"],
             "analysis": report.get("analysis", ""),
+            "key_reasons": report.get("key_reasons", []),
             "monte_carlo_summary": monte_carlo_summary,
         }
         async with aiohttp.ClientSession() as session:
@@ -740,19 +741,23 @@ class SupabaseClient:
 
             # Delete simulation events first (FK dependency)
             events_url = f"{self.base_url}/rest/v1/simulation_events"
-            await session.delete(
+            async with session.delete(
                 events_url,
                 params={"simulation_id": f"eq.{simulation_id}"},
                 headers=self.headers,
-            )
+            ) as resp:
+                if resp.status not in [200, 204]:
+                    print(f"[WARN] Failed to delete events for sim {simulation_id}: {resp.status}")
 
             # Delete simulation report (FK dependency)
             reports_url = f"{self.base_url}/rest/v1/simulation_reports"
-            await session.delete(
+            async with session.delete(
                 reports_url,
                 params={"simulation_id": f"eq.{simulation_id}"},
                 headers=self.headers,
-            )
+            ) as resp:
+                if resp.status not in [200, 204]:
+                    print(f"[WARN] Failed to delete report for sim {simulation_id}: {resp.status}")
 
             # Delete the simulation itself
             async with session.delete(
@@ -761,16 +766,28 @@ class SupabaseClient:
                 headers=self.headers,
             ) as response:
                 if response.status not in [200, 204]:
+                    print(f"[ERROR] Failed to delete simulation {simulation_id}: {response.status}")
                     return False
 
-            # Delete the orphaned scenario
+            # Delete the orphaned scenario (only if no other simulations reference it)
             if scenario_id:
-                scenarios_url = f"{self.base_url}/rest/v1/scenarios"
-                await session.delete(
-                    scenarios_url,
-                    params={"scenario_id": f"eq.{scenario_id}"},
+                # Check if other simulations use this scenario
+                async with session.get(
+                    sim_url,
+                    params={"scenario_id": f"eq.{scenario_id}", "select": "simulation_id", "limit": "1"},
                     headers=self.headers,
-                )
+                ) as resp:
+                    other_sims = await resp.json() if resp.status == 200 else []
+                
+                if not other_sims:
+                    scenarios_url = f"{self.base_url}/rest/v1/scenarios"
+                    async with session.delete(
+                        scenarios_url,
+                        params={"scenario_id": f"eq.{scenario_id}"},
+                        headers=self.headers,
+                    ) as resp:
+                        if resp.status not in [200, 204]:
+                            print(f"[WARN] Failed to delete scenario {scenario_id}: {resp.status}")
 
             return True
 

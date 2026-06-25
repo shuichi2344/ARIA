@@ -89,6 +89,7 @@ export interface SimReport {
   archetype_breakdown: Record<string, { visit_pct: number; skip_pct: number; churn_pct: number }>
   recommendations: string[]
   analysis?: string
+  key_reasons?: string[]
 }
 
 // ---------------------------------------------------------------------------

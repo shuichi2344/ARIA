@@ -6,6 +6,8 @@ sqlalchemy==2.0.25
 mesa==2.2.4
 pandas==2.2.0
 numpy==1.26.3
+openpyxl==3.1.2
+xlrd==2.0.1
 aiohttp==3.9.1
 pydantic==2.5.3
 pydantic-settings==2.1.0
@@ -20,11 +22,15 @@ hypothesis==6.98.0
 
 # Utility dependencies
 python-dotenv==1.0.1
+python-multipart==0.0.9
 pyyaml==6.0.1
 requests==2.31.0
 
 # Data processing
 networkx==3.2.1
+
+# Document OCR (LLMWhisperer for PDF/image text extraction)
+llmwhisperer-client==2.7.0
 
 # GPU monitoring (optional, for VRAM tracking)
 gputil==1.4.0

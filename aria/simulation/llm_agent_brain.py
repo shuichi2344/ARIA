@@ -233,7 +233,7 @@ Profile:"""
         business_context: Optional[Dict] = None,
         peer_messages: Optional[List[str]] = None,
         income_level: Optional[str] = None,
-        spark_section: str = ""
+        sales_context: str = "",
     ) -> Dict:
         """
         Unified LLM call: decides (visit/skip/churn) AND generates a message
@@ -246,7 +246,7 @@ Profile:"""
         customer_type = (business_context or {}).get('customer_type', 'B2C')
         
         if customer_type == 'B2B':
-            return await self._b2b_decision(agent_profile, scenario_context, business_context, peer_messages, income_level, spark_section)
+            return await self._b2b_decision(agent_profile, scenario_context, business_context, peer_messages, income_level, sales_context)
         
         scenario_desc = scenario_context.get('description', '')
         scenario_type = scenario_context.get('scenario_type', '')
@@ -268,9 +268,15 @@ Profile:"""
                 business_block += f" in {location}"
             if price_min > 0 and price_max > 0:
                 business_block += f"\nTypical prices: RM{price_min:.0f}-RM{price_max:.0f}"
-        
-        if spark_section:
-            business_block += f"\n\n{spark_section}"
+            usp = business_context.get('unique_selling_points', '')
+            if usp:
+                business_block += f"\nWhat makes it special: {usp}"
+            years = business_context.get('years_operating')
+            if years and years > 0:
+                if years >= 5:
+                    business_block += f"\nEstablished business ({years} years operating) with a loyal regular customer base."
+                else:
+                    business_block += f"\nRelatively new business ({years} year{'s' if years != 1 else ''} operating), still building its customer base."
         
         # Build peer context
         peer_block = ""
@@ -309,7 +315,7 @@ Profile:"""
 
 SCENARIO: {scenario_desc}
 {peer_block}{income_block}
-
+{f"{chr(10)}{sales_context}" if sales_context else ""}
 Based on who you are and the scenario above, decide: will you VISIT, SKIP, or CHURN (stop going permanently)?
 
 {guidelines}
@@ -382,7 +388,7 @@ Spend: [amount in RM you'd spend if visiting, or 0]"""
         business_context: Optional[Dict] = None,
         peer_messages: Optional[List[str]] = None,
         business_size: Optional[str] = None,
-        spark_section: str = "",
+        sales_context: str = "",
     ) -> Dict:
         """
         B2B-specific decision making. Uses procurement/relationship logic
@@ -413,9 +419,6 @@ Spend: [amount in RM you'd spend if visiting, or 0]"""
             avg_transaction = b2b.get('avg_transaction_rm', 500)
             if avg_transaction:
                 supplier_block += f"\nTypical order value: RM{avg_transaction}"
-        
-        if spark_section:
-            supplier_block += f"\n\n{spark_section}"
         
         # Build peer context (other businesses in same segment)
         peer_block = ""
@@ -458,7 +461,7 @@ Spend: [amount in RM you'd spend if visiting, or 0]"""
 
 Your supplier has made this change: {scenario_desc}
 {peer_block}{size_block}
-
+{f"{chr(10)}{sales_context}" if sales_context else ""}
 As a business customer, decide: will you CONTINUE (keep ordering as usual), REDUCE (order less or delay), or SWITCH (find a new supplier)?
 
 DECISION GUIDELINES:

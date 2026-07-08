@@ -41,13 +41,11 @@ CREATE TABLE public.chat_sessions (
   session_id uuid NOT NULL DEFAULT uuid_generate_v4(),
   user_id uuid NOT NULL,
   profile_id uuid,
-  active_spark_id uuid,
   started_at timestamp with time zone DEFAULT now(),
   last_message_at timestamp with time zone DEFAULT now(),
   CONSTRAINT chat_sessions_pkey PRIMARY KEY (session_id),
   CONSTRAINT chat_sessions_user_fk FOREIGN KEY (user_id) REFERENCES public.users(user_id),
-  CONSTRAINT chat_sessions_profile_fk FOREIGN KEY (profile_id) REFERENCES public.business_profiles(profile_id),
-  CONSTRAINT chat_sessions_spark_fk FOREIGN KEY (active_spark_id) REFERENCES public.sparks(spark_id) ON DELETE SET NULL
+  CONSTRAINT chat_sessions_profile_fk FOREIGN KEY (profile_id) REFERENCES public.business_profiles(profile_id)
 );
 
 CREATE TABLE public.scenarios (
@@ -130,21 +128,25 @@ CREATE TABLE public.password_reset_tokens (
   CONSTRAINT password_reset_tokens_user_fk FOREIGN KEY (user_id) REFERENCES public.users(user_id)
 );
 
--- Context Sparks tables for enhanced simulation context
-CREATE TABLE public.sparks (
-  spark_id uuid NOT NULL DEFAULT uuid_generate_v4(),
-  user_id uuid NOT NULL,
-  template_id character varying NOT NULL CHECK (template_id::text = ANY (ARRAY['competitive_context'::character varying, 'location_context'::character varying, 'business_hours_seasonality'::character varying]::text[])),
-  name character varying(100) NOT NULL,
-  status character varying(20) NOT NULL DEFAULT 'draft'::character varying CHECK (status::text = ANY (ARRAY['draft'::character varying, 'in_progress'::character varying, 'completed'::character varying]::text[])),
-  answers jsonb NOT NULL DEFAULT '{}'::jsonb,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT sparks_pkey PRIMARY KEY (spark_id),
-  CONSTRAINT sparks_user_fk FOREIGN KEY (user_id) REFERENCES public.users(user_id) ON DELETE CASCADE
-);
-
-CREATE INDEX sparks_user_updated_idx ON public.sparks (user_id, updated_at DESC);
-
 -- Index for filtering Monte Carlo simulations
 CREATE INDEX simulations_monte_carlo_idx ON public.simulations(monte_carlo_enabled, monte_carlo_converged);
+
+CREATE TABLE public.sales_records (
+  record_id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  profile_id uuid NOT NULL,
+  sale_date date NOT NULL,
+  total_sales double precision NOT NULL CHECK (total_sales >= 0),
+  transaction_count integer DEFAULT NULL CHECK (transaction_count >= 0),
+  source varchar(50) NOT NULL DEFAULT 'manual'
+    CHECK (source IN ('manual')),
+  notes text DEFAULT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT sales_records_pkey PRIMARY KEY (record_id),
+  CONSTRAINT sales_records_profile_fk FOREIGN KEY (profile_id) REFERENCES public.business_profiles(profile_id) ON DELETE CASCADE
+);
+
+-- Index for efficient date-range queries
+CREATE INDEX sales_records_profile_date_idx ON public.sales_records (profile_id, sale_date DESC);
+
+-- Prevent duplicate entries for same business + same date
+CREATE UNIQUE INDEX sales_records_unique_day_idx ON public.sales_records (profile_id, sale_date);

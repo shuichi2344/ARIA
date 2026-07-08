@@ -6,6 +6,7 @@ with smart follow-up questions and user confirmation/correction flow.
 """
 
 import json
+import re
 from typing import Dict, Any
 from aria.llm import LLMClient
 

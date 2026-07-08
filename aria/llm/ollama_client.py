@@ -271,33 +271,3 @@ class OllamaClient:
             if isinstance(e, OllamaError):
                 raise
             raise OllamaError(f"Unexpected error: {str(e)}")
-    
-    async def get_model_info(self) -> Dict[str, Any]:
-        """
-        Get information about the current model.
-        
-        Returns:
-            Dictionary with model information
-        
-        Raises:
-            OllamaError: If request fails
-        """
-        try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
-                payload = {"name": self.model}
-                
-                async with session.post(
-                    f"{self.base_url}/api/show",
-                    json=payload
-                ) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    else:
-                        raise OllamaError(f"Failed to get model info: {response.status}")
-        
-        except aiohttp.ClientConnectorError:
-            raise OllamaError("Cannot connect to Ollama server")
-        except Exception as e:
-            if isinstance(e, OllamaError):
-                raise
-            raise OllamaError(f"Unexpected error: {str(e)}")

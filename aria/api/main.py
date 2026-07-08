@@ -187,6 +187,8 @@ class BusinessProfileResponse(BaseModel):
     district: Optional[str]
     years_operating: Optional[int]
     unique_selling_points: Optional[str]
+    price_range_min: Optional[float] = None
+    price_range_max: Optional[float] = None
     customer_profile: Optional[Dict[str, Any]]
     created_at: datetime
 
@@ -590,6 +592,8 @@ async def create_business_profile(
             district=saved_profile.get('district'),
             years_operating=saved_profile.get('years_operating'),
             unique_selling_points=saved_profile.get('unique_selling_points'),
+            price_range_min=saved_profile.get('price_range_min'),
+            price_range_max=saved_profile.get('price_range_max'),
             customer_profile=customer_profile,
             created_at=datetime.fromisoformat(saved_profile['created_at'].replace('Z', '+00:00'))
         )
@@ -629,6 +633,8 @@ async def get_profile_by_user(user_id: str):
             district=profile.get('district'),
             years_operating=profile.get('years_operating'),
             unique_selling_points=profile.get('unique_selling_points'),
+            price_range_min=profile.get('price_range_min'),
+            price_range_max=profile.get('price_range_max'),
             customer_profile=customer_profile,
             created_at=datetime.fromisoformat(profile['created_at'].replace('Z', '+00:00'))
         )
@@ -654,6 +660,8 @@ async def get_business_profile(profile_id: str):
             district=profile.get('district'),
             years_operating=profile.get('years_operating'),
             unique_selling_points=profile.get('unique_selling_points'),
+            price_range_min=profile.get('price_range_min'),
+            price_range_max=profile.get('price_range_max'),
             customer_profile=profile.get('customer_profile'),
             created_at=datetime.fromisoformat(profile['created_at'].replace('Z', '+00:00'))
         )
@@ -688,6 +696,8 @@ async def update_business_profile(profile_id: str, business_data: BusinessProfil
             district=updated.get('district'),
             years_operating=updated.get('years_operating'),
             unique_selling_points=updated.get('unique_selling_points'),
+            price_range_min=updated.get('price_range_min'),
+            price_range_max=updated.get('price_range_max'),
             customer_profile=None,
             created_at=datetime.fromisoformat(updated['created_at'].replace('Z', '+00:00'))
         )
@@ -858,19 +868,10 @@ async def suggest_scenarios(request: Request, body: ScenarioSuggestRequest):
     try:
         agent = ScenarioSuggestionAgent()
 
-        # Fetch active Spark for the session (if chat_session_id provided)
-        active_spark = None
-        if body.chat_session_id:
-            from aria.sparks.spark_manager import SparkManager
-            supabase = SupabaseClient()
-            spark_manager = SparkManager(supabase)
-            active_spark = await spark_manager.get_active_spark(body.chat_session_id)
-
         result = await agent.analyze_question(
             business_profile=body.business_profile,
             user_question=body.user_question,
             use_external_context=body.use_external_context,
-            active_spark=active_spark,    # NEW
         )
         
         logger.info(f"Scenario analysis complete - {len(result.get('scenarios', []))} scenarios generated")
@@ -920,20 +921,16 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
                 print(f"[INFO] Loaded business profile: {profile['business_name']}")
                 print(f"[INFO] Price range: RM{profile['price_range_min']:.2f} - RM{profile['price_range_max']:.2f}")
         
-        # Fetch active Spark for this session
-        active_spark = None
-        if body.chat_session_id:
-            from aria.sparks.spark_manager import SparkManager as _SparkManager
-            from aria.sparks.spark_templates import SPARK_TEMPLATES as _SPARK_TEMPLATES
-            from aria.sparks.spark_context_injector import SparkContextInjector as _SparkContextInjector
-            _spark_client = supabase_client if body.profile_id else SupabaseClient()
-            _sm = _SparkManager(_spark_client)
-            active_spark = await _sm.get_active_spark(body.chat_session_id)
-
-        spark_section = ""
-        if active_spark is not None:
-            _template = _SPARK_TEMPLATES.get(active_spark.template_id)
-            spark_section = _SparkContextInjector.build_spark_section(active_spark, _template)
+        # Fetch sales history context to calibrate agent behaviour
+        sales_context = ""
+        if body.profile_id:
+            try:
+                from aria.sales.sales_context import build_sales_context
+                sales_context = await build_sales_context(body.profile_id)
+                if sales_context:
+                    print(f"[INFO] Sales context loaded ({len(sales_context)} chars)")
+            except Exception as _sc_err:
+                print(f"[WARN] Could not load sales context: {_sc_err}")
 
         # Fallback: use business_profile from scenario if DB fetch didn't populate profile
         if not profile:
@@ -1008,8 +1005,7 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
                 "target_customer_constraints": target_customer_constraints,
                 "b2b_percentage": body.b2b_percentage,
                 "agents_cached":  True,  # Flag: skip LLM profile generation
-                "active_spark":   active_spark,
-                "spark_section":  spark_section,
+                "sales_context":  sales_context,
                 # Monte Carlo configuration
                 "monte_carlo_enabled": body.monte_carlo_enabled,
                 "monte_carlo_config": MonteCarloConfig(
@@ -1259,8 +1255,7 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
             "b2b_percentage": body.b2b_percentage,
             "agents_cached":  False,
             "cache_key":      cache_key,  # For caching after LLM profiles are generated
-            "active_spark":   active_spark,
-            "spark_section":  spark_section,
+            "sales_context":  sales_context,
             # Monte Carlo configuration
             "monte_carlo_enabled": body.monte_carlo_enabled,
             "monte_carlo_config": MonteCarloConfig(
@@ -1670,7 +1665,6 @@ async def _run_simulation_single(sim_id: str, run_number: int = 1) -> Dict[str, 
     agents = sim["agents"]
     scenario = sim["scenario"]
     business_profile = sim.get("business_profile", {})
-    spark_section = sim.get("spark_section", "")
 
     def _is_aborted() -> bool:
         return _active_sims.get(sim_id, {}).get("status") == "aborted"
@@ -1890,11 +1884,13 @@ async def _run_simulation_single(sim_id: str, run_number: int = 1) -> Dict[str, 
     total_churned = 0
     agent_decisions = []
 
+    sales_context = sim.get("sales_context", "")
+
     scenario_context = {
         'scenario_type': scenario_type,
         'description': scenario.get('description', ''),
         'parameters': params,
-        'spark_section': spark_section,
+        'sales_context': sales_context,
     }
 
     # Lookup dict: unique_id → agent dict (avoids index-based access)
@@ -2808,118 +2804,136 @@ def _calc_spend(agent: Dict, price_change: float, business_profile: Optional[Dic
 
 
 # ---------------------------------------------------------------------------
-# Spark endpoints
+# Sales endpoints — Smart Sales Insights
 # ---------------------------------------------------------------------------
 
-import dataclasses
 
-from aria.sparks.spark_manager import (
-    SparkManager,
-    SparkRecord,
-    SparkCreateRequest,
-    SparkAnswerRequest,
-    SparkActivateRequest,
-    SparkUpdateRequest,
-)
-from aria.sparks.spark_qa_engine import SparkQAEngine
-
-
-@app.get("/api/sparks/templates")
+@app.get("/api/sales/records")
 @limiter.limit(GENERAL_RATE_LIMIT)
-async def get_spark_templates(request: Request):
-    """List all three Spark templates with their questions."""
+async def get_sales_records(request: Request, profile_id: str):
+    """Get all sales records for a business profile, ordered by date descending."""
+    validate_uuid(profile_id, "profile_id")
+
     supabase = SupabaseClient()
-    manager = SparkManager(supabase)
-    templates = await manager.get_templates()
-    return {"templates": [dataclasses.asdict(t) for t in templates]}
+    url = f"{supabase.base_url}/rest/v1/sales_records"
+    params = {
+        "profile_id": f"eq.{profile_id}",
+        "select": "record_id,sale_date,total_sales,transaction_count,source,notes",
+        "order": "sale_date.desc",
+        "limit": "500",
+    }
+
+    import aiohttp
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, params=params, headers=supabase.headers) as response:
+            if response.status == 200:
+                records = await response.json()
+                return {"records": records}
+            else:
+                error_text = await response.text()
+                raise HTTPException(status_code=500, detail=f"Failed to fetch records: {error_text}")
 
 
-@app.get("/api/sparks")
+class ManualSalesEntry(BaseModel):
+    """Request model for manually entering a sales record."""
+    model_config = {"extra": "forbid"}
+    profile_id: str = Field(..., min_length=1, max_length=100)
+    sale_date: str = Field(..., min_length=10, max_length=10, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    total_sales: float = Field(..., ge=0)
+    transaction_count: Optional[int] = Field(None, ge=0)
+
+
+@app.post("/api/sales/manual")
 @limiter.limit(GENERAL_RATE_LIMIT)
-async def list_sparks(request: Request, user_id: str):
-    """List all Sparks for a user, ordered by updated_at DESC."""
+async def add_manual_sales(request: Request, body: ManualSalesEntry):
+    """Manually add a sales record for a specific date."""
+    validate_uuid(body.profile_id, "profile_id")
+
     supabase = SupabaseClient()
-    manager = SparkManager(supabase)
-    sparks = await manager.list_sparks(user_id)
-    return {"sparks": [s.model_dump() for s in sparks]}
+    try:
+        await _insert_sales_record(
+            supabase,
+            profile_id=body.profile_id,
+            sale_date=body.sale_date,
+            total_sales=body.total_sales,
+            transaction_count=body.transaction_count,
+            source='manual',
+            notes='Manually entered',
+        )
+        return {"status": "success", "sale_date": body.sale_date, "total_sales": body.total_sales}
+    except Exception as e:
+        if 'duplicate' in str(e).lower() or '23505' in str(e):
+            raise HTTPException(status_code=409, detail=f"An entry for {body.sale_date} already exists.")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/sparks", response_model=SparkRecord)
+@app.delete("/api/sales/records/{record_id}")
 @limiter.limit(GENERAL_RATE_LIMIT)
-async def create_spark(request: Request, body: SparkCreateRequest):
-    """Create a new draft Spark."""
+async def delete_sales_record(request: Request, record_id: str, profile_id: str):
+    """Delete a single sales record by ID. Requires profile_id for ownership check."""
+    validate_uuid(record_id, "record_id")
+    validate_uuid(profile_id, "profile_id")
+
     supabase = SupabaseClient()
-    manager = SparkManager(supabase)
-    spark = await manager.create_spark(
-        user_id=body.user_id,
-        template_id=body.template_id,
-        name=body.name,
-    )
-    return spark
+    import aiohttp as _aiohttp
+
+    # Ownership check: fetch the record first
+    fetch_url = f"{supabase.base_url}/rest/v1/sales_records?record_id=eq.{record_id}&profile_id=eq.{profile_id}&select=record_id"
+    async with _aiohttp.ClientSession() as session:
+        async with session.get(fetch_url, headers=supabase.headers) as resp:
+            if resp.status != 200:
+                raise HTTPException(status_code=500, detail="Failed to verify record ownership")
+            rows = await resp.json()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="Record not found or does not belong to this profile")
+
+    # Delete
+    delete_url = f"{supabase.base_url}/rest/v1/sales_records?record_id=eq.{record_id}&profile_id=eq.{profile_id}"
+    async with _aiohttp.ClientSession() as session:
+        async with session.delete(delete_url, headers=supabase.headers) as resp:
+            if resp.status not in (200, 204):
+                err = await resp.text()
+                raise HTTPException(status_code=500, detail=f"Failed to delete record: {err}")
+
+    return {"status": "deleted", "record_id": record_id}
 
 
-@app.get("/api/sparks/{spark_id}", response_model=SparkRecord)
-@limiter.limit(GENERAL_RATE_LIMIT)
-async def get_spark(request: Request, spark_id: str, user_id: str):
-    """Get a Spark by ID (owner check enforced)."""
-    validate_uuid(spark_id, "spark_id")
-    supabase = SupabaseClient()
-    manager = SparkManager(supabase)
-    return await manager.get_spark(spark_id, user_id)
+async def _insert_sales_record(
+    supabase: SupabaseClient,
+    profile_id: str,
+    sale_date: str,
+    total_sales: float,
+    transaction_count: Optional[int],
+    source: str,
+    notes: Optional[str],
+) -> Dict[str, Any]:
+    """Insert a single sales record via Supabase REST API."""
+    import aiohttp
 
+    url = f"{supabase.base_url}/rest/v1/sales_records"
+    data = {
+        "profile_id": profile_id,
+        "sale_date": sale_date,
+        "total_sales": total_sales,
+        "source": source,
+    }
+    if transaction_count is not None:
+        data["transaction_count"] = transaction_count
+    if notes:
+        data["notes"] = notes
 
-@app.patch("/api/sparks/{spark_id}", response_model=SparkRecord)
-@limiter.limit(GENERAL_RATE_LIMIT)
-async def update_spark(request: Request, spark_id: str, body: SparkUpdateRequest):
-    """Update a Spark's name or individual answers."""
-    validate_uuid(spark_id, "spark_id")
-    supabase = SupabaseClient()
-    manager = SparkManager(supabase)
-    return await manager.update_spark(spark_id, body.user_id, body)
+    # Use upsert to handle duplicates gracefully
+    headers = {**supabase.headers, "Prefer": "resolution=merge-duplicates,return=representation"}
 
-
-@app.delete("/api/sparks/{spark_id}")
-@limiter.limit(GENERAL_RATE_LIMIT)
-async def delete_spark(request: Request, spark_id: str, user_id: str):
-    """Permanently delete a Spark."""
-    validate_uuid(spark_id, "spark_id")
-    supabase = SupabaseClient()
-    manager = SparkManager(supabase)
-    await manager.delete_spark(spark_id, user_id)
-    return {"status": "deleted"}
-
-
-@app.post("/api/sparks/{spark_id}/answer")
-@limiter.limit(GENERAL_RATE_LIMIT)
-async def submit_spark_answer(request: Request, spark_id: str, body: SparkAnswerRequest):
-    """Submit an answer during Q&A flow. Returns QAState."""
-    validate_uuid(spark_id, "spark_id")
-    supabase = SupabaseClient()
-    manager = SparkManager(supabase)
-    engine = SparkQAEngine(manager)
-    qa_state = await engine.process_answer(spark_id, body.user_id, body.answer_text)
-    return qa_state.model_dump()
-
-
-@app.post("/api/sparks/{spark_id}/activate")
-@limiter.limit(GENERAL_RATE_LIMIT)
-async def activate_spark(request: Request, spark_id: str, body: SparkActivateRequest):
-    """Activate a completed Spark for a chat session."""
-    validate_uuid(spark_id, "spark_id")
-    supabase = SupabaseClient()
-    manager = SparkManager(supabase)
-    await manager.activate_spark(spark_id, body.session_id, body.user_id)
-    return {"status": "activated", "spark_id": spark_id, "session_id": body.session_id}
-
-
-@app.post("/api/session/{session_id}/spark/deactivate")
-@limiter.limit(GENERAL_RATE_LIMIT)
-async def deactivate_spark(request: Request, session_id: str, user_id: str):
-    """Remove the active Spark from a chat session."""
-    supabase = SupabaseClient()
-    manager = SparkManager(supabase)
-    await manager.deactivate_spark(session_id)
-    return {"status": "deactivated"}
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=data, headers=headers) as response:
+            if response.status in [200, 201]:
+                result = await response.json()
+                return result[0] if isinstance(result, list) else result
+            else:
+                error_text = await response.text()
+                raise Exception(f"Insert failed ({response.status}): {error_text}")
 
 
 if __name__ == "__main__":

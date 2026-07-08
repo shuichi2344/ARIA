@@ -12,6 +12,8 @@ export interface BusinessProfile {
   district?: string
   years_operating?: number
   unique_selling_points?: string
+  price_range_min?: number
+  price_range_max?: number
   customer_profile?: Record<string, unknown>
 }
 
@@ -92,39 +94,3 @@ export interface SimReport {
   key_reasons?: string[]
 }
 
-// ---------------------------------------------------------------------------
-// Spark types (Context Sparks feature)
-// ---------------------------------------------------------------------------
-
-export interface SparkQuestion {
-  id: string
-  label: string
-  text: string
-}
-
-export interface SparkTemplate {
-  id: string
-  name: string
-  description: string
-  questions: SparkQuestion[]
-}
-
-export interface SparkRecord {
-  spark_id: string
-  user_id: string
-  template_id: string
-  name: string
-  status: 'draft' | 'in_progress' | 'completed'
-  answers: Record<string, string>
-  created_at: string
-  updated_at: string
-}
-
-export type SparkQAMode = 'idle' | 'answering' | 'complete'
-
-export interface SparkQAState {
-  spark_id: string
-  mode: SparkQAMode
-  current_question_index: number
-  total_questions: number
-}

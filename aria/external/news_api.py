@@ -79,109 +79,6 @@ class NewsAPIClient:
             logger.error(f"newsdata.io request failed: {e}")
             return {'status': 'error', 'results': []}
     
-    async def fetch_economic_news(
-        self,
-        country: str = "my",
-        category: str = "business",
-        max_articles: int = 10
-    ) -> List[Dict[str, Any]]:
-        """
-        Fetch recent economic news for Malaysia.
-        
-        Args:
-            country: Country code (default: 'my' for Malaysia)
-            category: News category (default: 'business')
-            max_articles: Maximum articles to return (default: 10)
-        
-        Returns:
-            List of article dictionaries
-        """
-        params = {
-            'country': country,
-            'category': category,
-            'language': 'en',
-            'size': min(max_articles, 10),  # Free tier max is 10
-        }
-        
-        logger.info(f"Fetching economic news for {country}, category: {category}")
-        response = await self._make_request(params)
-        
-        articles = response.get('results', [])
-        if not isinstance(articles, list):
-            articles = []
-        
-        logger.info(f"Fetched {len(articles)} economic news articles")
-        return self._process_articles(articles, category='economic')
-    
-    async def fetch_industry_news(
-        self,
-        industry: str,
-        location: str = "Malaysia",
-        max_articles: int = 10
-    ) -> List[Dict[str, Any]]:
-        """
-        Fetch industry-specific news.
-        
-        Args:
-            industry: Industry type (e.g., 'restaurant', 'retail', 'cafe')
-            location: Location filter (default: 'Malaysia')
-            max_articles: Maximum articles to return (default: 10)
-        
-        Returns:
-            List of article dictionaries
-        """
-        industry_keywords = self._get_industry_keywords(industry)
-        query = f"{industry_keywords} {location}"
-        
-        params = {
-            'q': query,
-            'language': 'en',
-            'size': min(max_articles, 10),
-        }
-        
-        logger.info(f"Fetching industry news: {industry} in {location}")
-        response = await self._make_request(params)
-        
-        articles = response.get('results', [])
-        if not isinstance(articles, list):
-            articles = []
-        
-        logger.info(f"Fetched {len(articles)} industry news articles")
-        return self._process_articles(articles, category='industry', industry=industry)
-    
-    async def fetch_local_news(
-        self,
-        location: str = "Penang",
-        max_articles: int = 10
-    ) -> List[Dict[str, Any]]:
-        """
-        Fetch location-specific economic news.
-        
-        Args:
-            location: Location (e.g., 'Penang', 'Kuala Lumpur')
-            max_articles: Maximum articles to return (default: 10)
-        
-        Returns:
-            List of article dictionaries
-        """
-        query = f"{location} economy business"
-        
-        params = {
-            'q': query,
-            'language': 'en',
-            'size': min(max_articles, 10),
-        }
-        
-        logger.info(f"Fetching local news for {location}")
-        response = await self._make_request(params)
-        
-        articles = response.get('results', [])
-        if not isinstance(articles, list):
-            articles = []
-        
-        logger.info(f"Fetched {len(articles)} local news articles")
-        return self._process_articles(articles, category='local', location=location)
-    
     async def search_news(
         self,
         query: str,
@@ -220,20 +117,6 @@ class NewsAPIClient:
             return self._process_articles(articles, category='custom')
         finally:
             await self.close()
-    
-    def _get_industry_keywords(self, industry: str) -> str:
-        """Get search keywords for industry."""
-        keywords_map = {
-            'restaurant': 'restaurant food dining',
-            'mamak': 'mamak restaurant food',
-            'cafe': 'cafe coffee shop',
-            'retail': 'retail shop store',
-            'tourism': 'tourism hotel travel',
-            'grocery': 'grocery supermarket',
-            'bakery': 'bakery pastry',
-            'salon': 'salon beauty hair',
-        }
-        return keywords_map.get(industry.lower(), industry)
     
     def _process_articles(
         self,

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Scenario Suggestion Agent for ARIA.
 Analyzes user questions and suggests relevant simulation scenarios.
 Enhanced with real-world context from News API and DOSM economic data.
@@ -6,6 +6,7 @@ Enhanced with real-world context from News API and DOSM economic data.
 
 from typing import Dict, Any, List
 from aria.llm import LLMClient, prompts
+from aria.llm.parsers import parse_json_response, ParsingError
 from aria.external.news_api import NewsAPIClient
 from aria.external.dosm import DOSMClient
 from aria.external.malaysia_calendar import MalaysiaCalendarClient
@@ -59,12 +60,12 @@ class ScenarioSuggestionAgent:
         # Build search query from user question
         print(f"User question: '{user_question}'")
         keywords = self._build_search_query(user_question)
-        print(f"âœ“ Search query: '{keywords}'")
+        print(f"✓ Search query: '{keywords}'")
         
         # Gather news context if News API is available
         if self.news_client and keywords:
             try:
-                print(f"â†’ Searching News API with query: '{keywords}'")
+                print(f"→ Searching News API with query: '{keywords}'")
                 
                 # Search for relevant news (English only, Malaysia)
                 news_articles = await self.news_client.search_news(
@@ -73,29 +74,29 @@ class ScenarioSuggestionAgent:
                 )
                 
                 context["news_articles"] = news_articles[:3]  # Keep top 3
-                print(f"âœ“ News API: Found {len(news_articles)} articles (using top 3)")
+                print(f"✓ News API: Found {len(news_articles)} articles (using top 3)")
                 
                 if news_articles:
                     for i, article in enumerate(news_articles[:3], 1):
                         print(f"  {i}. {article['title'][:60]}...")
                 
             except Exception as e:
-                print(f"âœ— News API failed: {e}")
-                print("  â†’ Continuing without news context")
+                print(f"✗ News API failed: {e}")
+                print("  → Continuing without news context")
         else:
             if not self.news_client:
-                print("âœ— News API client not initialized (NEWS_API_KEY missing)")
+                print("✗ News API client not initialized (NEWS_API_KEY missing)")
             else:
-                print("âœ— Could not build search query from question")
+                print("✗ Could not build search query from question")
         
         # Gather DOSM economic indicators
         try:
-            print("â†’ Loading DOSM economic data")
+            print("→ Loading DOSM economic data")
             
             # Get district from business location
             location = business_profile.get("location", "")
             district = self.dosm_client.map_location_to_district(location)
-            print(f"  Mapped location '{location}' â†’ district '{district}'")
+            print(f"  Mapped location '{location}' → district '{district}'")
             
             # Get demographic and economic data
             demographics = await self.dosm_client.get_demographics(district)
@@ -107,7 +108,7 @@ class ScenarioSuggestionAgent:
                 "source": demographics.get("source", "DOSM")
             }
             
-            print(f"âœ“ DOSM data loaded for district: {district}")
+            print(f"✓ DOSM data loaded for district: {district}")
             
             # Log income distribution
             income_dist = demographics.get("income_distribution", {})
@@ -119,18 +120,18 @@ class ScenarioSuggestionAgent:
                     print(f"    {group}: {pct}% (median: RM{median:,})")
             
         except Exception as e:
-            print(f"âœ— DOSM data loading failed: {e}")
-            print("  â†’ Continuing without economic indicators")
+            print(f"✗ DOSM data loading failed: {e}")
+            print("  → Continuing without economic indicators")
         
         # Gather Malaysia holiday context (always available, no API key needed)
         try:
-            print("â†’ Loading Malaysia holiday data (Pulau Pinang)")
+            print("→ Loading Malaysia holiday data (Pulau Pinang)")
             holiday_summary = await self.calendar_client.get_holiday_context_summary()
             context["holiday_context"] = holiday_summary
-            print(f"âœ“ Holiday context loaded")
+            print(f"✓ Holiday context loaded")
         except Exception as e:
-            print(f"âœ— Holiday data loading failed: {e}")
-            print("  â†’ Continuing without holiday context")
+            print(f"✗ Holiday data loading failed: {e}")
+            print("  → Continuing without holiday context")
         
         # Generate context summary
         context["context_summary"] = self._summarize_context(
@@ -138,7 +139,7 @@ class ScenarioSuggestionAgent:
             economic_indicators=context["economic_indicators"]
         )
         
-        print("âœ“ Context gathering complete")
+        print("✓ Context gathering complete")
         print("=" * 60)
         
         return context
@@ -266,7 +267,6 @@ class ScenarioSuggestionAgent:
         business_profile: Dict[str, Any],
         user_question: str,
         use_external_context: bool = False,
-        active_spark=None,  # Optional[SparkRecord] â€” type hint via string to avoid circular import
     ) -> Dict[str, Any]:
         """
         Analyze user's open-ended question and suggest scenarios.
@@ -309,15 +309,15 @@ class ScenarioSuggestionAgent:
             }
             # Load holiday context only if the question is relevant
             if self._is_holiday_relevant(user_question):
-                print("  â†’ Holiday-related question detected, loading calendar data")
+                print("  → Holiday-related question detected, loading calendar data")
                 try:
                     holiday_summary = await self.calendar_client.get_holiday_context_summary()
                     context["holiday_context"] = holiday_summary
-                    print(f"  âœ“ Holiday context loaded")
+                    print(f"  ✓ Holiday context loaded")
                 except Exception as e:
-                    print(f"  âœ— Holiday data unavailable: {e}")
+                    print(f"  ✗ Holiday data unavailable: {e}")
             else:
-                print("  â†’ No holiday keywords detected, skipping calendar API")
+                print("  → No holiday keywords detected, skipping calendar API")
             print("=" * 60)
         
         # STEP 2: Generate custom LLM scenarios
@@ -329,16 +329,20 @@ class ScenarioSuggestionAgent:
         recommended_action = ""
         
         try:
-            print("â†’ Building LLM prompt with context")
+            print("→ Building LLM prompt with context")
 
-            # Build Spark context section (lazy import to avoid circular dependency)
-            spark_section = ""
-            if active_spark is not None:
-                from aria.sparks.spark_templates import SPARK_TEMPLATES
-                from aria.sparks.spark_context_injector import SparkContextInjector
-                template = SPARK_TEMPLATES.get(active_spark.template_id)
-                spark_section = SparkContextInjector.build_spark_section(active_spark, template)
-            
+            # Fetch sales context to ground suggestions in real business history
+            sales_context = ""
+            profile_id = business_profile.get("id") or business_profile.get("profile_id")
+            if profile_id:
+                try:
+                    from aria.sales.sales_context import build_sales_context
+                    sales_context = await build_sales_context(profile_id)
+                    if sales_context:
+                        print(f"  → Sales context loaded ({len(sales_context)} chars)")
+                except Exception as _sc_err:
+                    print(f"  → Sales context unavailable: {_sc_err}")
+
             # Generate scenario suggestions with context
             prompt = prompts.scenario_suggestion_with_context(
                 business_profile=business_profile,
@@ -346,11 +350,11 @@ class ScenarioSuggestionAgent:
                 news_articles=context["news_articles"],
                 economic_indicators=context["economic_indicators"],
                 holiday_context=context.get("holiday_context", ""),
-                spark_section=spark_section,
+                sales_context=sales_context,
             )
             
             print(f"  Prompt length: {len(prompt)} characters")
-            print("â†’ Calling Ollama LLM...")
+            print("→ Calling Ollama LLM...")
             
             response = await self.llm_client.generate(
                 prompt=prompt,
@@ -358,37 +362,31 @@ class ScenarioSuggestionAgent:
                 max_tokens=4000
             )
             
-            print(f"âœ“ LLM response received ({len(response['response'])} characters)")
-            print("â†’ Parsing LLM response...")
+            print(f"✓ LLM response received ({len(response['response'])} characters)")
+            print("→ Parsing LLM response...")
             
-            # Debug: log first/last 100 chars to help diagnose parse failures
+            # Debug: log first/last 80 chars to help diagnose parse failures
             raw_resp = response["response"]
             print(f"  [debug] Response starts with: {repr(raw_resp[:80])}")
             print(f"  [debug] Response ends with: {repr(raw_resp[-80:])}")
             
-            # Parse JSON response directly
+            # Parse JSON response using robust parser
             try:
-                result = json.loads(raw_resp)
-            except json.JSONDecodeError as e:
-                print(f"âœ— JSON parsing failed: {e}")
-                # Try to extract JSON from response if it contains extra text
-                import re
-                json_match = re.search(r'\{.*\}', raw_resp, re.DOTALL)
-                if json_match:
-                    result = json.loads(json_match.group())
-                else:
-                    raise ValueError(f"Could not parse JSON from LLM response: {e}")
+                result = parse_json_response(raw_resp)
+            except ParsingError as e:
+                print(f"✗ JSON parsing failed: {e}")
+                raise ValueError(f"Could not parse JSON from LLM response: {e}")
             
             scenarios = result.get("scenarios", [])
             analysis = result.get("analysis", "")
             recommended_action = result.get("recommended_action", "")
             
-            print(f"âœ“ Successfully generated {len(scenarios)} custom scenarios")
+            print(f"✓ Successfully generated {len(scenarios)} custom scenarios")
             for i, scenario in enumerate(scenarios, 1):
                 print(f"  {i}. {scenario['scenario_name']} (relevance: {scenario.get('relevance_score', 'N/A')}/100)")
             
         except Exception as e:
-            print(f"âœ— LLM scenario generation failed: {e}")
+            print(f"✗ LLM scenario generation failed: {e}")
             import traceback
             traceback.print_exc()
             
@@ -403,7 +401,7 @@ class ScenarioSuggestionAgent:
         print("=" * 60)
         print(f"Generated scenarios: {len(scenarios)}")
         print("=" * 60)
-        print("âœ“ Scenario generation complete\n")
+        print("✓ Scenario generation complete\n")
         
         return {
             "analysis": analysis,

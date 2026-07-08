@@ -14,6 +14,7 @@ export default function LandingPage() {
   const { session, setSession, logout } = useSession()
   const [authOpen, setAuthOpen] = useState(false)
   const [authTab,  setAuthTab]  = useState<'login' | 'register'>('login')
+  const [navigating, setNavigating] = useState(false)
 
   // Apply saved theme on every mount — same as initThemeSwitcher() / applyTheme()
   useEffect(() => {
@@ -57,9 +58,15 @@ export default function LandingPage() {
   async function routeAfterAuth(user: { id: string; email: string; created_at: string }) {
     setSession(user)
     setAuthOpen(false)
+    setNavigating(true)
 
     try {
-      const res = await fetch(`${API_BASE}/api/business/profile/user/${user.id}`)
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 5000)
+      const res = await fetch(`${API_BASE}/api/business/profile/user/${user.id}`, {
+        signal: controller.signal,
+      })
+      clearTimeout(timeout)
       if (res.ok) {
         const profile = await res.json()
         if (profile?.id) {
@@ -69,7 +76,7 @@ export default function LandingPage() {
           return
         }
       }
-    } catch { /* API unreachable — fall through to onboarding */ }
+    } catch { /* API unreachable or timed out — fall through to onboarding */ }
 
     router.push('/onboarding')
   }
@@ -77,7 +84,7 @@ export default function LandingPage() {
   /** "Get Started" — same as startOnboarding() */
   function startOnboarding() {
     if (!session?.id) {
-      setAuthTab('login')
+      setAuthTab('register')
       setAuthOpen(true)
       return
     }
@@ -141,11 +148,13 @@ export default function LandingPage() {
               simulations to help Malaysian SMEs understand how customers will react to business
               decisions.
             </p>
-            <button className="btn-cta" onClick={startOnboarding}>
-              <span>Get Started</span>
-              <svg className="icon-btn" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path d="M5 12h14M12 5l7 7-7 7"/>
-              </svg>
+            <button className="btn-cta" onClick={startOnboarding} disabled={navigating}>
+              <span>{navigating ? 'Loading...' : 'Get Started'}</span>
+              {!navigating && (
+                <svg className="icon-btn" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M5 12h14M12 5l7 7-7 7"/>
+                </svg>
+              )}
             </button>
           </div>
         </section>

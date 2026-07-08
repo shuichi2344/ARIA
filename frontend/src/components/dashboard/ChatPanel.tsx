@@ -1,12 +1,11 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import type { Scenario, BusinessProfile, SparkRecord, SparkQAMode, SparkTemplate } from './types'
+import type { Scenario, BusinessProfile } from './types'
 import { jsPDF } from 'jspdf'
 import SimulationSettings from './SimulationSettings'
 import type { SimulationSettingsState } from './SimulationSettings'
 import { SIMULATION_MODES } from './SimulationSettings'
-import { api } from '@/lib/api'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
@@ -142,17 +141,6 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
   // Tracks whether the user is currently viewing a past simulation (history)
   const viewingHistoryRef = useRef(false)
 
-  // Spark Q&A state
-  const [sparkQAMode, setSparkQAMode] = useState<SparkQAMode>('idle')
-  const [sparkQASparkId, setSparkQASparkId] = useState<string | null>(null)
-  const [sparkQATotalQuestions, setSparkQATotalQuestions] = useState(0)
-  const [sparkQACurrentIndex, setSparkQACurrentIndex] = useState(0)
-  const [isUpdatingExistingSpark, setIsUpdatingExistingSpark] = useState(false)
-
-  // Spark management state
-  const [activeSpark, setActiveSpark] = useState<SparkRecord | null>(null)
-  const [savedSparks, setSavedSparks] = useState<SparkRecord[]>([])
-
   // userId helper ref — avoids re-reading localStorage on every render
   const userIdRef = useRef<string>('')
 
@@ -181,23 +169,6 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
     } catch {}
   }, [])
 
-  // Fetch saved sparks on mount (when userId available)
-  useEffect(() => {
-    const fetchSparks = async () => {
-      const userId = userIdRef.current
-      if (!userId) return
-      try {
-        const result = await api.fetchSparks(userId)
-        setSavedSparks(result.sparks || [])
-      } catch {
-        // Silently fail — sparks are optional
-      }
-    }
-    // Small delay to let userIdRef populate
-    const timer = setTimeout(fetchSparks, 100)
-    return () => clearTimeout(timer)
-  }, [])
-
   // Event delegation for PDF download button — survives re-renders and tab switches
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -211,49 +182,81 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
 
         const doc = new jsPDF()
         const margin = 15
+        const pageWidth = 180
         let y = 20
 
-        doc.setFontSize(16)
+        // Helper: add new page when content would overflow
+        function checkPage(needed: number) {
+          if (y + needed > 280) {
+            doc.addPage()
+            y = 20
+          }
+        }
+
+        // ── Title ──
+        doc.setFontSize(18)
+        doc.setFont('helvetica', 'bold')
         doc.text('ARIA Simulation Report', margin, y)
-        y += 12
+        y += 14
 
+        // ── Scenario info ──
         doc.setFontSize(11)
-        doc.text(`Scenario: ${report.scenario?.name || 'Unknown'}`, margin, y); y += 6
-        const descLines = doc.splitTextToSize(report.scenario?.description || '', 180)
-        doc.setFontSize(9)
-        doc.text(descLines, margin, y); y += descLines.length * 4 + 8
+        doc.setFont('helvetica', 'normal')
+        doc.text(`Scenario: ${report.scenario?.name || 'Unknown'}`, margin, y); y += 7
+        doc.setFontSize(10)
+        const descLines: string[] = doc.splitTextToSize(report.scenario?.description || '', pageWidth)
+        for (let i = 0; i < descLines.length; i++) {
+          checkPage(6)
+          doc.text(descLines[i], margin, y)
+          y += 5
+        }
+        y += 10
 
-        doc.setFontSize(13)
-        doc.text('Risk Summary', margin, y); y += 8
-        doc.setFontSize(11)
-        doc.text(`Risk Level: ${risk.risk_level}`, margin, y); y += 7
-        doc.text(`Churn Rate: ${risk.churn_rate}%`, margin, y); y += 7
-        doc.text(`Visit Rate: ${risk.visit_rate}%`, margin, y); y += 7
-        doc.text(`Estimated Revenue: RM${risk.estimated_revenue.toFixed(2)}`, margin, y); y += 7
-        doc.text(`Total Customers: ${risk.total_agents}`, margin, y); y += 10
+        // ── Risk Summary ──
+        checkPage(50)
+        doc.setFontSize(14)
+        doc.setFont('helvetica', 'bold')
+        doc.text('Risk Summary', margin, y); y += 9
+        doc.setFontSize(10)
+        doc.setFont('helvetica', 'normal')
+        doc.text(`Risk Level: ${risk.risk_level}`, margin + 4, y); y += 6
+        doc.text(`Churn Rate: ${risk.churn_rate}%`, margin + 4, y); y += 6
+        doc.text(`Visit Rate: ${risk.visit_rate}%`, margin + 4, y); y += 6
+        doc.text(`Estimated Revenue: RM${risk.estimated_revenue.toFixed(2)}`, margin + 4, y); y += 6
+        doc.text(`Total Customers: ${risk.total_agents}`, margin + 4, y); y += 8
         doc.setFontSize(8)
-        doc.setTextColor(128)
-        const revDisclaimerLines = doc.splitTextToSize('Note: Revenue is estimated from your business price range, adjusted by the scenario\'s price change. Each visiting customer spends a random amount within your configured price range.', 180)
-        doc.text(revDisclaimerLines, margin, y); y += revDisclaimerLines.length * 3.5 + 6
+        doc.setTextColor(120)
+        const revNote: string[] = doc.splitTextToSize('Note: Revenue is estimated from your business price range, adjusted by the scenario\'s price change. Each visiting customer spends a random amount within your configured price range.', pageWidth)
+        for (let i = 0; i < revNote.length; i++) {
+          doc.text(revNote[i], margin, y)
+          y += 4
+        }
+        y += 4
         doc.setTextColor(0)
 
-        doc.setFontSize(13)
-        doc.text(report.breakdown_type === 'personality' ? 'Personality Breakdown' : 'Customer Breakdown', margin, y); y += 8
+        // ── Customer/Personality Breakdown ──
+        checkPage(60)
+        doc.setFontSize(14)
+        doc.setFont('helvetica', 'bold')
+        doc.text(report.breakdown_type === 'personality' ? 'Personality Breakdown' : 'Customer Breakdown', margin, y); y += 9
         doc.setFontSize(10)
+        doc.setFont('helvetica', 'normal')
         Object.entries(breakdown).forEach(([level, data]: [string, any]) => {
           doc.text(`${level}: ${data.visit_pct}% visit, ${data.skip_pct}% skip, ${data.churn_pct}% churn`, margin + 4, y)
           y += 6
         })
-        y += 4
+        y += 6
 
-        // Draw stacked bar chart
+        // ── Stacked bar chart ──
         const barHeight = 14
         const barMaxWidth = 140
         const barX = margin + 40
         const chartColors = { visit: [34, 197, 94], skip: [234, 179, 8], churn: [239, 68, 68] }
 
         Object.entries(breakdown).forEach(([level, data]: [string, any]) => {
+          checkPage(barHeight + 6)
           doc.setFontSize(9)
+          doc.setFont('helvetica', 'normal')
           doc.setTextColor(0)
           doc.text(level, margin, y + barHeight / 2 + 1)
 
@@ -273,65 +276,93 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
         })
 
         // Legend
-        y += 2
+        y += 4
         doc.setFontSize(8)
+        doc.setFont('helvetica', 'normal')
         doc.setFillColor(34, 197, 94); doc.rect(margin, y, 8, 5, 'F')
         doc.setTextColor(0); doc.text('Visit', margin + 10, y + 4)
         doc.setFillColor(234, 179, 8); doc.rect(margin + 30, y, 8, 5, 'F')
         doc.text('Skip', margin + 40, y + 4)
         doc.setFillColor(239, 68, 68); doc.rect(margin + 60, y, 8, 5, 'F')
         doc.text('Churn', margin + 70, y + 4)
-        y += 12
+        y += 14
 
-        // Analysis section
+        // ── Analysis ──
         const analysis = report.analysis || ''
         if (analysis) {
-          doc.setFontSize(13)
+          checkPage(30)
+          doc.setFontSize(14)
+          doc.setFont('helvetica', 'bold')
           doc.setTextColor(0)
-          doc.text('Analysis', margin, y); y += 8
+          doc.text('Analysis', margin, y); y += 9
           doc.setFontSize(10)
-          const analysisLines = doc.splitTextToSize(analysis, 180)
-          // Check if we need a new page
-          if (y + analysisLines.length * 5 > 280) {
-            doc.addPage()
-            y = 20
+          doc.setFont('helvetica', 'normal')
+          const analysisLines: string[] = doc.splitTextToSize(analysis, pageWidth)
+          for (let i = 0; i < analysisLines.length; i++) {
+            checkPage(6)
+            doc.text(analysisLines[i], margin + 4, y)
+            y += 5
           }
-          doc.text(analysisLines, margin + 4, y)
-          y += analysisLines.length * 5 + 8
+          y += 8
         }
 
-        // Key reasons for skip/churn
+        // ── Key Reasons ──
         const keyReasons = report.key_reasons || []
         if (keyReasons.length > 0) {
-          doc.setFontSize(13)
+          checkPage(20)
+          doc.setFontSize(14)
+          doc.setFont('helvetica', 'bold')
           doc.setTextColor(0)
-          doc.text('Key Reasons for Skip/Churn', margin, y); y += 8
+          doc.text('Key Reasons for Skip/Churn', margin, y); y += 9
           doc.setFontSize(10)
+          doc.setFont('helvetica', 'normal')
           doc.setTextColor(60)
           keyReasons.forEach((r: string, i: number) => {
-            const reasonLines = doc.splitTextToSize(`${i + 1}. ${r}`, 175)
-            doc.text(reasonLines, margin + 4, y)
-            y += reasonLines.length * 5 + 3
+            const reasonLines: string[] = doc.splitTextToSize(`${i + 1}. ${r}`, pageWidth - 4)
+            for (let j = 0; j < reasonLines.length; j++) {
+              checkPage(6)
+              doc.text(reasonLines[j], margin + 4, y)
+              y += 5
+            }
+            y += 3
           })
-          y += 4
+          y += 6
         }
 
-        doc.setFontSize(13)
-        doc.setTextColor(0)
-        doc.text('Recommendations', margin, y); y += 8
-        doc.setFontSize(10)
-        recs.forEach((r: string) => {
-          const clean = r.replace(/\*\*/g, '')
-          const lines = doc.splitTextToSize(clean, 180)
-          doc.text(lines, margin + 4, y)
-          y += lines.length * 5 + 4
-        })
-        y += 6
+        // ── Recommendations ──
+        if (recs.length > 0) {
+          checkPage(20)
+          doc.setFontSize(14)
+          doc.setFont('helvetica', 'bold')
+          doc.setTextColor(0)
+          doc.text('Recommendations', margin, y); y += 9
+          doc.setFontSize(10)
+          doc.setFont('helvetica', 'normal')
+          doc.setTextColor(0)
+          recs.forEach((r: string, i: number) => {
+            const clean = r.replace(/\*\*/g, '')
+            const lines: string[] = doc.splitTextToSize(`${i + 1}. ${clean}`, pageWidth - 4)
+            for (let j = 0; j < lines.length; j++) {
+              checkPage(6)
+              doc.text(lines[j], margin + 4, y)
+              y += 5
+            }
+            y += 4
+          })
+          y += 6
+        }
 
+        // ── Disclaimer ──
+        checkPage(15)
         doc.setFontSize(8)
-        doc.setTextColor(128)
-        const disclaimerLines = doc.splitTextToSize(report.disclaimer, 180)
-        doc.text(disclaimerLines, margin, y)
+        doc.setFont('helvetica', 'italic')
+        doc.setTextColor(120)
+        const disclaimerLines: string[] = doc.splitTextToSize(report.disclaimer || '', pageWidth)
+        for (let i = 0; i < disclaimerLines.length; i++) {
+          checkPage(5)
+          doc.text(disclaimerLines[i], margin, y)
+          y += 4
+        }
 
         // Build filename from scenario name and date
         const scenarioSlug = (report.scenario?.name || 'simulation')
@@ -339,7 +370,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
           .replace(/[^a-z0-9]+/g, '-')
           .replace(/^-|-$/g, '')
           .slice(0, 50)
-        const dateStr = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
+        const dateStr = new Date().toISOString().slice(0, 10)
         doc.save(`aria-${scenarioSlug}-${dateStr}.pdf`)
       }
     }
@@ -577,76 +608,6 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
     const text = input.trim()
     if (!text || loading || simulationStatus === 'running' || simulationStatus === 'paused') return
     
-    // If Spark Q&A is in progress, intercept and route to answer endpoint
-    if (sparkQAMode === 'answering' && sparkQASparkId) {
-      // Check if user wants to cancel
-      if (text.toLowerCase() === 'cancel') {
-        setInput('')
-        handleCancelSparkQA()
-        return
-      }
-      
-      setInput('')
-      setMessages(p => [...p, { id: generateMsgId(), role: 'user', text }])
-      setLoading(true)
-      setMessages(p => [...p, { id: generateMsgId(), role: 'typing' }])
-      const userId = userIdRef.current
-      try {
-        const qaState = await api.submitSparkAnswer(sparkQASparkId, {
-          user_id: userId,
-          question_id: '', // Backend determines current question internally
-          answer_text: text,
-        })
-
-        setMessages(p => p.filter(m => m.role !== 'typing'))
-
-        if (qaState.status === 'completed') {
-          setSparkQAMode('complete')
-          setIsUpdatingExistingSpark(false) // Reset update flag
-          setMessages(p => [...p, { id: generateMsgId(), role: 'aria', text: qaState.aria_message }])
-
-          // Update the spark in savedSparks to status=completed
-          setSavedSparks(prev => prev.map(s =>
-            s.spark_id === sparkQASparkId
-              ? { ...s, status: 'completed' as const }
-              : s
-          ))
-
-          // Auto-activate the spark when completed
-          if (chatSessionRef.current) {
-            try {
-              await api.activateSpark(sparkQASparkId, { 
-                user_id: userId, 
-                session_id: chatSessionRef.current 
-              })
-              const spark = savedSparks.find(s => s.spark_id === sparkQASparkId) || null
-              setActiveSpark(spark || { spark_id: sparkQASparkId, status: 'completed' as const, name: '', template_id: '', user_id: userId, answers: {}, created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-              setMessages(p => [...p, { 
-                id: generateMsgId(), 
-                role: 'aria', 
-                text: "✨ This context spark has been automatically activated for your session!" 
-              }])
-            } catch {
-              // If auto-activation fails, silently continue (user can manually activate later)
-            }
-          }
-        } else if (qaState.validation_error) {
-          setMessages(p => [...p, { id: generateMsgId(), role: 'aria', text: qaState.aria_message }])
-        } else {
-          setSparkQACurrentIndex(qaState.current_question_index)
-          setMessages(p => [...p, { id: generateMsgId(), role: 'aria', text: qaState.aria_message }])
-        }
-      } catch {
-        setMessages(p => [
-          ...p.filter(m => m.role !== 'typing'),
-          { id: generateMsgId(), role: 'aria', text: "Sorry, I couldn't save that answer. Please try again." },
-        ])
-      } finally {
-        setLoading(false)
-      }
-      return // Don't proceed to /api/simulation/suggest
-    }
-
     // Abort any pending request
     if (abortRef.current) abortRef.current.abort()
     const controller = new AbortController()
@@ -896,193 +857,6 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
     })
   }
 
-  // Handler: user selects a template to start Q&A (or updates an existing spark)
-  const handleSelectTemplate = async (templateId: string, existingSparkId?: string) => {
-    const userId = userIdRef.current
-    if (!userId) return
-    try {
-      // If updating an existing spark, use that; otherwise create a new one
-      const spark = existingSparkId
-        ? savedSparks.find(s => s.spark_id === existingSparkId)
-        : await api.createSpark({ user_id: userId, template_id: templateId })
-      
-      if (!spark) return
-
-      // Fetch templates to get the first question text
-      const templatesResult = await api.fetchSparkTemplates()
-      const template = templatesResult.templates.find(t => t.id === templateId)
-      if (!template) return
-
-      const firstQuestion = template.questions[0]
-
-      // Set Q&A state
-      setSparkQASparkId(spark.spark_id)
-      setSparkQAMode('answering')
-      setSparkQATotalQuestions(template.questions.length)
-      setSparkQACurrentIndex(0)
-      setIsUpdatingExistingSpark(!!existingSparkId) // Track if we're updating
-
-      // Append ARIA message with first question
-      setMessages(p => [...p, {
-        id: generateMsgId(),
-        role: 'aria',
-        text: `Question 1 of ${template.questions.length}: ${firstQuestion.text}`,
-      }])
-
-      // Update saved sparks list only if it's a new spark
-      if (!existingSparkId) {
-        setSavedSparks(prev => [spark, ...prev])
-      }
-    } catch {
-      setMessages(p => [...p, {
-        id: generateMsgId(), role: 'aria',
-        text: "Sorry, I couldn't start the Spark Q&A. Please try again.",
-      }])
-    }
-  }
-
-  // Handler: activate a spark for this session
-  const handleActivateSpark = async (sparkId: string) => {
-    const userId = userIdRef.current
-    if (!userId) {
-      console.error('[Spark] Cannot activate: no userId')
-      return
-    }
-    
-    // Ensure we have a chat session by persisting a system message if needed
-    if (!chatSessionRef.current) {
-      console.log('[Spark] Creating chat session before activation...')
-      try {
-        const res = await fetch(`${API_BASE}/api/chat/message`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            user_id: userId,
-            profile_id: profile?.id,
-            session_id: null,
-            role: 'aria',
-            content: 'Session initialized for spark activation.',
-            metadata: { type: 'system', hidden: true },
-          }),
-        })
-        const data = await res.json()
-        if (data.session_id) {
-          chatSessionRef.current = data.session_id
-          console.log('[Spark] Session created:', data.session_id)
-        } else {
-          throw new Error('No session_id returned')
-        }
-      } catch (err) {
-        console.error('[Spark] Failed to create session:', err)
-        setMessages(p => [...p, {
-          id: generateMsgId(),
-          role: 'aria',
-          text: "Sorry, I couldn't activate the spark. Please try sending a message first to start a session.",
-        }])
-        return
-      }
-    }
-    
-    // At this point we should have a session
-    const sessionId = chatSessionRef.current
-    if (!sessionId) {
-      console.error('[Spark] No session ID after initialization')
-      setMessages(p => [...p, {
-        id: generateMsgId(),
-        role: 'aria',
-        text: "Sorry, I couldn't activate the spark. Please try again.",
-      }])
-      return
-    }
-    
-    try {
-      console.log('[Spark] Activating spark:', sparkId, 'for session:', sessionId)
-      await api.activateSpark(sparkId, { user_id: userId, session_id: sessionId })
-      const spark = savedSparks.find(s => s.spark_id === sparkId) || null
-      setActiveSpark(spark)
-      console.log('[Spark] Activation successful')
-      
-      // Show confirmation message
-      setMessages(p => [...p, {
-        id: generateMsgId(),
-        role: 'aria',
-        text: `✨ "${spark?.name || 'Spark'}" is now active for this session!`,
-      }])
-    } catch (err) {
-      console.error('[Spark] Activation failed:', err)
-      setMessages(p => [...p, {
-        id: generateMsgId(),
-        role: 'aria',
-        text: "Sorry, I couldn't activate the spark. Please try again.",
-      }])
-    }
-  }
-
-  // Handler: deactivate the active spark
-  const handleDeactivateSpark = async () => {
-    const userId = userIdRef.current
-    if (!userId || !chatSessionRef.current) return
-    try {
-      await api.deactivateSpark(chatSessionRef.current, userId)
-      setActiveSpark(null)
-    } catch {}
-  }
-
-  // Handler: update (re-open) a spark to edit its answers
-  const handleUpdateSpark = async (sparkId: string) => {
-    // Find the spark
-    const spark = savedSparks.find(s => s.spark_id === sparkId)
-    if (!spark) return
-    
-    // Close settings and trigger the Q&A flow with the existing spark
-    setSettingsOpen(false)
-    
-    // Add ARIA message to start updating
-    const ariaIntro: Message = {
-      id: generateMsgId(),
-      role: 'aria',
-      text: `Let's update your "${spark.name}" context. I'll ask you the questions again, and you can provide updated answers. (Type "cancel" at any time to stop updating)`,
-    }
-    setMessages(prev => [...prev, ariaIntro])
-    
-    // Start the Q&A flow for this spark (it will reload the questions)
-    handleSelectTemplate(spark.template_id, sparkId)
-  }
-
-  // Handler: cancel spark Q&A flow
-  const handleCancelSparkQA = async () => {
-    const wasUpdating = isUpdatingExistingSpark
-    const sparkId = sparkQASparkId
-    
-    // Reset Q&A state
-    setSparkQAMode('idle')
-    setSparkQASparkId(null)
-    setSparkQATotalQuestions(0)
-    setSparkQACurrentIndex(0)
-    setIsUpdatingExistingSpark(false)
-    
-    // If creating a new spark (not updating), delete the draft
-    if (!wasUpdating && sparkId) {
-      const userId = userIdRef.current
-      if (userId) {
-        try {
-          await api.deleteSpark(sparkId, userId)
-          setSavedSparks(prev => prev.filter(s => s.spark_id !== sparkId))
-        } catch {
-          // Silently fail - spark may already be deleted
-        }
-      }
-    }
-    
-    setMessages(p => [...p, {
-      id: generateMsgId(),
-      role: 'aria',
-      text: wasUpdating 
-        ? "Update cancelled. Your spark's previous answers are preserved."
-        : "Spark creation cancelled.",
-    }])
-  }
-
   return (
     <aside style={{
       display: 'flex', flexDirection: 'column',
@@ -1157,48 +931,6 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
                 customerProfile={profile.customer_profile as Record<string, unknown> | undefined}
               />
 
-              {/* ── Context Sparks ── */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-                {/* Section header */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                  <svg style={{ width: 14, height: 14, color: 'var(--accent)', flexShrink: 0 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-                  </svg>
-                  <p style={{ margin: 0, fontSize: '0.7rem', fontWeight: 700, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    Context Sparks
-                  </p>
-                </div>
-                <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--gray-500)', lineHeight: 1.5 }}>
-                  Add real context about your business to make simulations more accurate. Select a spark to see what it covers, then decide whether to add it.
-                </p>
-
-                {/* Saved sparks */}
-                {savedSparks.length > 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                    {savedSparks.map(spark => (
-                      <SparkCard
-                        key={spark.spark_id}
-                        spark={spark}
-                        isActive={activeSpark?.spark_id === spark.spark_id}
-                        isDisabled={simulationStatus === 'running' || simulationStatus === 'paused'}
-                        onActivate={() => handleActivateSpark(spark.spark_id)}
-                        onDeactivate={handleDeactivateSpark}
-                        onUpdate={() => handleUpdateSpark(spark.spark_id)}
-                      />
-                    ))}
-                  </div>
-                )}
-
-                {/* Template cards — show what each spark is about before committing */}
-                <SparkTemplateCards
-                  existingSparkTemplateIds={savedSparks.map(s => s.template_id)}
-                  disabled={simulationStatus === 'running' || simulationStatus === 'paused'}
-                  onConfirm={templateId => {
-                    setSettingsOpen(false)
-                    handleSelectTemplate(templateId)
-                  }}
-                />
-              </div>
             </div>
           </div>
         </>
@@ -1568,51 +1300,6 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
           </div>
         )}
 
-        {/* Spark Q&A in progress indicator with cancel button */}
-        {sparkQAMode === 'answering' && (
-          <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '0.75rem',
-            background: 'rgba(99, 102, 241, 0.05)',
-            borderRadius: 8,
-            border: '1.5px solid var(--accent)',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <svg style={{ width: 16, height: 16, color: 'var(--accent)' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-              </svg>
-              <span style={{ fontSize: '0.8rem', color: 'var(--gray-700)', fontWeight: 600 }}>
-                {isUpdatingExistingSpark ? 'Updating spark' : 'Creating spark'} — Question {sparkQACurrentIndex + 1} of {sparkQATotalQuestions}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={handleCancelSparkQA}
-              style={{
-                padding: '0.3rem 0.6rem',
-                fontSize: '0.7rem',
-                fontWeight: 600,
-                borderRadius: 4,
-                border: '1px solid var(--gray-300)',
-                background: 'white',
-                color: 'var(--gray-700)',
-                cursor: 'pointer',
-                transition: 'all 0.15s',
-              }}
-              onMouseEnter={e => {
-                e.currentTarget.style.borderColor = '#dc2626'
-                e.currentTarget.style.color = '#dc2626'
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.borderColor = 'var(--gray-300)'
-                e.currentTarget.style.color = 'var(--gray-700)'
-              }}
-            >
-              Cancel
-            </button>
-          </div>
-        )}
-
         {/* Input Row */}
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           {/* Real-world context toggle — inline with input */}
@@ -1809,269 +1496,3 @@ function ScenarioChip({ scenario, onClick }: { scenario: Scenario; onClick: () =
     </button>
   )
 }
-
-// ── SparkCard ─────────────────────────────────────────────────────────────────
-// Individual spark card with activation toggle and update button
-
-interface SparkCardProps {
-  spark: SparkRecord
-  isActive: boolean
-  isDisabled: boolean
-  onActivate: () => void
-  onDeactivate: () => void
-  onUpdate: () => void
-}
-
-function SparkCard({ spark, isActive, isDisabled, onActivate, onDeactivate, onUpdate }: SparkCardProps) {
-  const [hoverActivateBtn, setHoverActivateBtn] = useState(false)
-  
-  return (
-    <div
-      style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '0.5rem 0.65rem',
-        borderRadius: 6,
-        border: `1.5px solid ${isActive ? '#15803d' : 'var(--gray-200)'}`,
-        background: 'transparent',
-      }}
-    >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem', flex: 1, minWidth: 0 }}>
-        <span style={{
-          fontSize: '0.78rem', fontWeight: isActive ? 700 : 600,
-          color: isActive ? '#15803d' : 'var(--gray-800)',
-          display: 'flex', alignItems: 'center', gap: '0.35rem',
-        }}>
-          {isActive && (
-            <span style={{
-              display: 'inline-block', width: 6, height: 6,
-              borderRadius: '50%', background: '#15803d', flexShrink: 0,
-            }} />
-          )}
-          {spark.name}
-        </span>
-        <span style={{ fontSize: '0.68rem', color: 'var(--gray-400)', textTransform: 'capitalize' }}>
-          {spark.status === 'completed' ? 'Ready' : spark.status === 'in_progress' ? 'In progress' : 'Draft'}
-        </span>
-      </div>
-      <div style={{ display: 'flex', gap: '0.3rem', flexShrink: 0 }}>
-        {isActive ? (
-          <button
-            onMouseEnter={() => setHoverActivateBtn(true)}
-            onMouseLeave={() => setHoverActivateBtn(false)}
-            onClick={() => !isDisabled && onDeactivate()}
-            disabled={isDisabled}
-            title={hoverActivateBtn ? "Click to deactivate" : "Currently activated"}
-            style={{
-              padding: '0.3rem 0.65rem', 
-              borderRadius: 4, 
-              fontSize: '0.7rem',
-              fontWeight: 600,
-              minWidth: '80px', // Fixed width to prevent size changes
-              border: `1.5px solid ${hoverActivateBtn ? '#dc2626' : '#15803d'}`,
-              background: hoverActivateBtn ? '#fecaca' : '#bbf7d0', // Lighter colors
-              color: hoverActivateBtn ? '#991b1b' : '#15803d', // Darker text for contrast
-              cursor: isDisabled ? 'not-allowed' : 'pointer',
-              opacity: isDisabled ? 0.5 : 1,
-              transition: 'background-color 0.2s ease, color 0.2s ease',
-            }}
-          >
-            {hoverActivateBtn ? 'Deactivate' : 'Activated'}
-          </button>
-        ) : (
-          <button
-            onClick={() => !isDisabled && onActivate()}
-            disabled={isDisabled || spark.status !== 'completed'}
-            title={spark.status !== 'completed' ? 'Complete all questions first' : 'Activate spark'}
-            style={{
-              padding: '0.3rem 0.65rem', 
-              borderRadius: 4, 
-              fontSize: '0.7rem',
-              fontWeight: 600,
-              minWidth: '80px', // Fixed width matching the active state
-              border: '1.5px solid var(--gray-300)',
-              background: 'white', 
-              color: 'var(--gray-700)',
-              cursor: (isDisabled || spark.status !== 'completed') ? 'not-allowed' : 'pointer',
-              opacity: (isDisabled || spark.status !== 'completed') ? 0.5 : 1,
-            }}
-          >
-            Activate
-          </button>
-        )}
-        <button
-          onClick={() => !isDisabled && onUpdate()}
-          disabled={isDisabled}
-          title="Update spark answers"
-          style={{
-            width: 26, height: 26, borderRadius: 4,
-            border: '1px solid var(--gray-200)', background: 'white',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: isDisabled ? 'not-allowed' : 'pointer',
-            opacity: isDisabled ? 0.5 : 1, color: 'var(--gray-500)',
-            transition: 'all 0.15s ease',
-          }}
-          onMouseEnter={e => {
-            if (!isDisabled) {
-              e.currentTarget.style.color = 'var(--accent)'
-              e.currentTarget.style.borderColor = 'var(--accent)'
-            }
-          }}
-          onMouseLeave={e => {
-            if (!isDisabled) {
-              e.currentTarget.style.color = 'var(--gray-500)'
-              e.currentTarget.style.borderColor = 'var(--gray-200)'
-            }
-          }}
-          aria-label="Update spark"
-        >
-          <svg style={{ width: 13, height: 13 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-          </svg>
-        </button>
-      </div>
-    </div>
-  )
-}
-
-// ── SparkTemplateCards ────────────────────────────────────────────────────────
-// Shown inside the Settings drawer. Fetches templates, lets the user read about
-// each one, then confirms before starting the Q&A flow in the chat.
-
-interface SparkTemplateCardsProps {
-  existingSparkTemplateIds: string[]
-  disabled: boolean
-  onConfirm: (templateId: string) => void
-}
-
-function SparkTemplateCards({ existingSparkTemplateIds, disabled, onConfirm }: SparkTemplateCardsProps) {
-  const [templates, setTemplates] = useState<SparkTemplate[]>([])
-  const [loadError, setLoadError] = useState(false)
-  const [expandedId, setExpandedId] = useState<string | null>(null)
-
-  useEffect(() => {
-    api.fetchSparkTemplates()
-      .then(r => setTemplates(r.templates || []))
-      .catch(() => setLoadError(true))
-  }, [])
-
-  // Filter out templates the user already has a spark for
-  const available = templates.filter(t => !existingSparkTemplateIds.includes(t.id))
-
-  if (loadError) return (
-    <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--gray-400)', fontStyle: 'italic' }}>
-      Could not load spark templates.
-    </p>
-  )
-
-  if (available.length === 0 && existingSparkTemplateIds.length > 0) return (
-    <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--gray-400)', fontStyle: 'italic' }}>
-      All available context sparks have been added.
-    </p>
-  )
-
-  if (available.length === 0) return null
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-      {available.map(template => {
-        const isExpanded = expandedId === template.id
-        return (
-          <div
-            key={template.id}
-            style={{
-              borderRadius: 8,
-              border: `1.5px solid ${isExpanded ? 'var(--accent)' : 'var(--gray-200)'}`,
-              background: 'transparent',
-              overflow: 'hidden',
-              transition: 'border-color 0.15s',
-            }}
-          >
-            {/* Template row — click to expand */}
-            <button
-              type="button"
-              onClick={() => setExpandedId(isExpanded ? null : template.id)}
-              disabled={disabled}
-              style={{
-                width: '100%', display: 'flex', alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '0.6rem 0.75rem',
-                background: 'none', border: 'none',
-                cursor: disabled ? 'not-allowed' : 'pointer',
-                textAlign: 'left', opacity: disabled ? 0.5 : 1,
-              }}
-            >
-              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--gray-800)' }}>
-                {template.name}
-              </span>
-              <svg
-                style={{
-                  width: 14, height: 14, color: 'var(--gray-400)', flexShrink: 0,
-                  transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-                  transition: 'transform 0.15s',
-                }}
-                viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-              >
-                <polyline points="6 9 12 15 18 9"/>
-              </svg>
-            </button>
-
-            {/* Expanded detail + confirm */}
-            {isExpanded && (
-              <div style={{ padding: '0 0.75rem 0.75rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-                <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--gray-600)', lineHeight: 1.5 }}>
-                  {template.description}
-                </p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                  <p style={{ margin: 0, fontSize: '0.68rem', fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                    Questions ({template.questions.length})
-                  </p>
-                  {template.questions.map((q, i) => (
-                    <div key={q.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'flex-start' }}>
-                      <span style={{
-                        fontSize: '0.68rem', fontWeight: 700, color: 'var(--accent)',
-                        minWidth: '1rem', flexShrink: 0, marginTop: '0.1rem',
-                      }}>
-                        {i + 1}.
-                      </span>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--gray-700)', lineHeight: 1.4 }}>
-                        {q.label}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.2rem' }}>
-                  <button
-                    type="button"
-                    onClick={() => { setExpandedId(null); onConfirm(template.id) }}
-                    style={{
-                      flex: 1, padding: '0.45rem 0.75rem', borderRadius: 6,
-                      background: 'var(--accent)', color: '#fff',
-                      border: 'none', fontWeight: 600, fontSize: '0.78rem',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Add this Spark
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setExpandedId(null)}
-                    style={{
-                      padding: '0.45rem 0.65rem', borderRadius: 6,
-                      background: 'white', color: 'var(--gray-600)',
-                      border: '1px solid var(--gray-300)', fontSize: '0.78rem',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-

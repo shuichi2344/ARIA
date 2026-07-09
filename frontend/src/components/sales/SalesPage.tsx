@@ -140,9 +140,22 @@ export default function SalesPage({ session }: Props) {
 
           {/* Page header */}
           <div style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
-            <div>
-              <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--gray-900)', margin: 0 }}>Sales Trend</h1>
-              <p style={{ fontSize: '0.875rem', color: 'var(--gray-500)', margin: '0.25rem 0 0' }}>Track your sales performance over time</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <button
+                onClick={() => router.back()}
+                title="Back"
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--gray-400)', flexShrink: 0, transition: 'color 0.15s, background 0.15s' }}
+                onMouseEnter={e => { e.currentTarget.style.color = 'var(--gray-800)'; e.currentTarget.style.background = 'var(--gray-100)' }}
+                onMouseLeave={e => { e.currentTarget.style.color = 'var(--gray-400)'; e.currentTarget.style.background = 'transparent' }}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ width: 20, height: 20 }}>
+                  <path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/>
+                </svg>
+              </button>
+              <div>
+                <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--gray-900)', margin: 0 }}>Sales Trend</h1>
+                <p style={{ fontSize: '0.875rem', color: 'var(--gray-500)', margin: '0.25rem 0 0' }}>Track your sales performance over time</p>
+              </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
               {/* Add Manually button */}

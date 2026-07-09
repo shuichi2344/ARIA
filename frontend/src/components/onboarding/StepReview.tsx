@@ -17,48 +17,59 @@ interface Props {
 export default function StepReview({ data, onFinish, onBack }: Props) {
   const { session } = useSession()
   const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
   const districtLabel = data.district ? DISTRICTS[data.district]?.label ?? data.district : '—'
 
   async function handleFinish() {
     setSaving(true)
+    setError('')
     try {
-      if (session?.id) {
-        // Check if we're editing an existing profile
-        const existingProfileId = localStorage.getItem('aria_profile_id')
-        
-        let result
-        if (existingProfileId) {
-          // Update existing profile
-          result = await api.updateBusinessProfile(existingProfileId, {
-            user_id: session.id, business_name: data.businessName, business_type: data.businessType,
-            business_category_id: data.businessCategoryId, location: `${data.city}, ${data.state}`,
-            district: data.district, years_operating: data.yearsOperating ? parseInt(data.yearsOperating) : undefined,
-            unique_selling_points: data.uniqueSellingPoints,
-            price_range_min: data.customerProfile?.price_range?.min, price_range_max: data.customerProfile?.price_range?.max,
-            customer_profile: data.customerProfile ?? undefined,
-          })
-        } else {
-          // Create new profile
-          result = await api.createBusinessProfile({
-            user_id: session.id, business_name: data.businessName, business_type: data.businessType,
-            business_category_id: data.businessCategoryId, location: `${data.city}, ${data.state}`,
-            district: data.district, years_operating: data.yearsOperating ? parseInt(data.yearsOperating) : undefined,
-            unique_selling_points: data.uniqueSellingPoints,
-            price_range_min: data.customerProfile?.price_range?.min, price_range_max: data.customerProfile?.price_range?.max,
-            customer_profile: data.customerProfile ?? undefined,
-          })
-        }
-        
-        // Save full profile (including customer_profile) to localStorage
-        const fullProfile = {
-          ...result,
-          customer_profile: data.customerProfile,
-        }
-        localStorage.setItem('aria_profile', JSON.stringify(fullProfile))
-        localStorage.setItem('aria_profile_id', result.id)
+      if (!session?.id) {
+        setError('You must be logged in to save your profile.')
+        return
       }
-    } catch (e) { console.warn('Profile save failed (non-fatal):', e) }
-    finally { setSaving(false); onFinish() }
+
+      const existingProfileId = localStorage.getItem('aria_profile_id')
+      const profilePayload = {
+        user_id: session.id,
+        business_name: data.businessName,
+        business_type: data.businessType,
+        business_category_id: data.businessCategoryId,
+        location: `${data.city}, ${data.state}`,
+        district: data.district,
+        years_operating: data.yearsOperating ? parseInt(data.yearsOperating) : undefined,
+        unique_selling_points: data.uniqueSellingPoints,
+        price_range_min: data.customerProfile?.price_range?.min,
+        price_range_max: data.customerProfile?.price_range?.max,
+        customer_profile: data.customerProfile ?? undefined,
+      }
+
+      let result
+      if (existingProfileId) {
+        try {
+          result = await api.updateBusinessProfile(existingProfileId, profilePayload)
+        } catch {
+          // Profile ID in localStorage is stale (wiped DB, migration, etc.) — create fresh
+          console.warn('Update failed for', existingProfileId, '— falling back to create')
+          localStorage.removeItem('aria_profile_id')
+          result = await api.createBusinessProfile(profilePayload)
+        }
+      } else {
+        result = await api.createBusinessProfile(profilePayload)
+      }
+
+      // Save full profile (including customer_profile) to localStorage
+      const fullProfile = { ...result, customer_profile: data.customerProfile }
+      localStorage.setItem('aria_profile',    JSON.stringify(fullProfile))
+      localStorage.setItem('aria_profile_id', result.id)
+
+      onFinish()
+    } catch (e) {
+      console.error('Profile save failed:', e)
+      setError('Failed to save profile. Please try again.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -99,6 +110,12 @@ export default function StepReview({ data, onFinish, onBack }: Props) {
           <p style={{ margin:0, color:'var(--gray-700)', fontSize:'0.9375rem', lineHeight:1.6 }}>Click "Complete Setup" to save your profile and start using ARIA. You can always update this information later in the settings.</p>
         </div>
       </div>
+
+      {error && (
+        <div style={{ background:'#fef2f2', border:'1px solid #fecaca', color:'#dc2626', borderRadius:8, padding:'0.75rem 1rem', marginBottom:'1rem', fontSize:'0.875rem' }}>
+          {error}
+        </div>
+      )}
 
       <div style={S.formActions}>
         <HoverBtn style={S.btnSecondary} onClick={onBack}>← Back</HoverBtn>

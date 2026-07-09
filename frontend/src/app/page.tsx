@@ -55,7 +55,14 @@ export default function LandingPage() {
    * 3. If found → go to dashboard
    * 4. If not → go to onboarding
    */
-  async function routeAfterAuth(user: { id: string; email: string; created_at: string }) {
+  async function routeAfterAuth(user: {
+    id: string
+    email: string
+    created_at: string
+    access_token: string
+    refresh_token?: string
+    email_confirmed?: boolean
+  }) {
     setSession(user)
     setAuthOpen(false)
     setNavigating(true)
@@ -65,6 +72,10 @@ export default function LandingPage() {
       const timeout = setTimeout(() => controller.abort(), 5000)
       const res = await fetch(`${API_BASE}/api/business/profile/user/${user.id}`, {
         signal: controller.signal,
+        headers: {
+          'Authorization': `Bearer ${user.access_token}`,
+          'Content-Type': 'application/json',
+        },
       })
       clearTimeout(timeout)
       if (res.ok) {

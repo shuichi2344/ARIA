@@ -23,7 +23,8 @@ CREATE TABLE public.business_profiles (
   b2c_target_segments ARRAY,
   b2b_target_types ARRAY,
   CONSTRAINT business_profiles_pkey PRIMARY KEY (profile_id),
-  CONSTRAINT business_profiles_user_fk FOREIGN KEY (user_id) REFERENCES public.users(user_id)
+  -- user_id references auth.users (Supabase Auth) — NOT public.users
+  CONSTRAINT business_profiles_user_fk FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE public.chat_messages (
@@ -44,7 +45,8 @@ CREATE TABLE public.chat_sessions (
   started_at timestamp with time zone DEFAULT now(),
   last_message_at timestamp with time zone DEFAULT now(),
   CONSTRAINT chat_sessions_pkey PRIMARY KEY (session_id),
-  CONSTRAINT chat_sessions_user_fk FOREIGN KEY (user_id) REFERENCES public.users(user_id),
+  -- user_id references auth.users (Supabase Auth) — NOT public.users
+  CONSTRAINT chat_sessions_user_fk FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
   CONSTRAINT chat_sessions_profile_fk FOREIGN KEY (profile_id) REFERENCES public.business_profiles(profile_id)
 );
 
@@ -109,24 +111,9 @@ CREATE TABLE public.simulations (
   CONSTRAINT simulations_scenario_fk FOREIGN KEY (scenario_id) REFERENCES public.scenarios(scenario_id)
 );
 
-CREATE TABLE public.users (
-  user_id uuid NOT NULL DEFAULT uuid_generate_v4(),
-  email character varying NOT NULL UNIQUE,
-  password_hash character varying NOT NULL,
-  created_at timestamp without time zone DEFAULT now(),
-  CONSTRAINT users_pkey PRIMARY KEY (user_id)
-);
-
-CREATE TABLE public.password_reset_tokens (
-  token_id uuid NOT NULL DEFAULT uuid_generate_v4(),
-  user_id uuid NOT NULL,
-  token character varying NOT NULL UNIQUE,
-  expires_at timestamp without time zone NOT NULL,
-  used boolean DEFAULT false,
-  created_at timestamp without time zone DEFAULT now(),
-  CONSTRAINT password_reset_tokens_pkey PRIMARY KEY (token_id),
-  CONSTRAINT password_reset_tokens_user_fk FOREIGN KEY (user_id) REFERENCES public.users(user_id)
-);
+-- NOTE: public.users and public.password_reset_tokens have been removed.
+-- User identity is now managed entirely by Supabase Auth (auth.users).
+-- See migrations/002_supabase_auth_migration.sql for the transition SQL.
 
 -- Index for filtering Monte Carlo simulations
 CREATE INDEX simulations_monte_carlo_idx ON public.simulations(monte_carlo_enabled, monte_carlo_converged);

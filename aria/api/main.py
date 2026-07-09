@@ -2,7 +2,7 @@
 FastAPI main application for ARIA platform.
 """
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any
@@ -15,6 +15,7 @@ from aria.agents.customer_profiler import CustomerProfiler
 from aria.database.supabase_client import SupabaseClient
 from aria.auth.password import validate_password_strength
 from aria.simulation.monte_carlo_cv import MonteCarloConfig
+from aria.config import get_settings
 from aria.api.security import (
     limiter,
     rate_limit_exceeded_handler,
@@ -23,6 +24,7 @@ from aria.api.security import (
     validate_uuid,
     check_for_injection,
     validate_email_format,
+    get_current_user,
     AUTH_RATE_LIMIT,
     FORGOT_PASSWORD_RATE_LIMIT,
     SIMULATION_RATE_LIMIT,
@@ -114,6 +116,9 @@ class UserResponse(BaseModel):
     id: str
     email: str
     created_at: datetime
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
+    email_confirmed: Optional[bool] = None
 
 
 class IncomeGroupInfo(BaseModel):
@@ -302,8 +307,7 @@ async def get_holidays(state: str = "pulau-pinang", year: Optional[int] = None):
 @app.post("/api/auth/register", response_model=UserResponse, status_code=201)
 @limiter.limit(AUTH_RATE_LIMIT)
 async def register(request: Request, body: UserRegister):
-    """Register a new user account."""
-    # Enforce strong password
+    """Register a new user account via Supabase Auth."""
     is_valid, error_msg = validate_password_strength(body.password)
     if not is_valid:
         raise HTTPException(status_code=400, detail=error_msg)
@@ -313,7 +317,10 @@ async def register(request: Request, body: UserRegister):
         return UserResponse(
             id=user["id"],
             email=user["email"],
-            created_at=datetime.fromisoformat(user["created_at"].replace("Z", "+00:00"))
+            created_at=datetime.fromisoformat(user["created_at"].replace("Z", "+00:00")),
+            access_token=user.get("access_token"),
+            refresh_token=user.get("refresh_token"),
+            email_confirmed=user.get("email_confirmed"),
         )
     except Exception as e:
         if "EMAIL_TAKEN" in str(e):
@@ -325,14 +332,16 @@ async def register(request: Request, body: UserRegister):
 @app.post("/api/auth/login", response_model=UserResponse)
 @limiter.limit(AUTH_RATE_LIMIT)
 async def login(request: Request, body: UserLogin):
-    """Login with email and password."""
+    """Login with email and password. Returns Supabase JWT tokens."""
     try:
         supabase_client = SupabaseClient()
         user = await supabase_client.login_user(body.email, body.password)
         return UserResponse(
             id=user["id"],
             email=user["email"],
-            created_at=datetime.fromisoformat(user["created_at"].replace("Z", "+00:00"))
+            created_at=datetime.fromisoformat(user["created_at"].replace("Z", "+00:00")),
+            access_token=user.get("access_token"),
+            refresh_token=user.get("refresh_token"),
         )
     except Exception as e:
         if "INVALID_CREDENTIALS" in str(e):
@@ -343,28 +352,36 @@ async def login(request: Request, body: UserLogin):
 
 class ChangePasswordRequest(BaseModel):
     model_config = {"extra": "forbid"}
-    user_id: str = Field(..., min_length=1, max_length=100)
-    current_password: str = Field(..., min_length=1, max_length=128)
     new_password: str = Field(..., min_length=6, max_length=128)
 
 
 @app.post("/api/auth/change-password")
 @limiter.limit(AUTH_RATE_LIMIT)
-async def change_password(request: Request, body: ChangePasswordRequest):
-    """Change user password after verifying current password."""
-    # Enforce strong password on new password
+async def change_password(
+    request: Request,
+    body: ChangePasswordRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Change the authenticated user's password.
+    Requires a valid Supabase JWT in the Authorization header.
+    The Bearer token is forwarded to Supabase Auth to perform the update.
+    """
     is_valid, error_msg = validate_password_strength(body.new_password)
     if not is_valid:
         raise HTTPException(status_code=400, detail=error_msg)
+
+    # Extract the raw token from the request — Supabase needs it to update the user
+    auth_header = request.headers.get("Authorization", "")
+    access_token = auth_header.removeprefix("Bearer ").strip()
+
     try:
         supabase_client = SupabaseClient()
-        await supabase_client.change_password(body.user_id, body.current_password, body.new_password)
+        await supabase_client.change_password(access_token, body.new_password)
         return {"success": True, "message": "Password updated successfully."}
     except Exception as e:
         if "INVALID_CREDENTIALS" in str(e):
-            raise HTTPException(status_code=401, detail="Current password is incorrect.")
-        if "USER_NOT_FOUND" in str(e):
-            raise HTTPException(status_code=404, detail="User not found.")
+            raise HTTPException(status_code=401, detail="Current session is invalid. Please log in again.")
         print(f"[ERROR] Change password failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to change password. Please try again.")
 
@@ -379,92 +396,75 @@ class ForgotPasswordRequest(BaseModel):
         return validate_email_format(v)
 
 
-class ResetPasswordRequest(BaseModel):
-    model_config = {"extra": "forbid"}
-    token: str = Field(..., min_length=1, max_length=200)
-    new_password: str = Field(..., min_length=6, max_length=128)
-
-
 @app.post("/api/auth/forgot-password")
 @limiter.limit(FORGOT_PASSWORD_RATE_LIMIT)
 async def forgot_password(request: Request, body: ForgotPasswordRequest):
     """
-    Request a password reset email.
+    Trigger Supabase Auth to send a password-reset email via Supabase SMTP.
     Always returns success to prevent email enumeration.
+    The reset link in the email contains a short-lived JWT that the frontend
+    must extract and pass to /api/auth/reset-password.
     """
-    from aria.auth.email import send_password_reset_email
-    import secrets as _secrets
-    from datetime import timedelta
+    settings = get_settings()
+    reset_redirect = f"{settings.app_url}/auth/reset-password"
 
     try:
         supabase_client = SupabaseClient()
-        user = await supabase_client.get_user_by_email(body.email.strip().lower())
-
-        if user:
-            # Generate a secure reset token
-            token = _secrets.token_urlsafe(32)
-            expires_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
-
-            # Store token in database
-            await supabase_client.create_password_reset_token(
-                user_id=user["user_id"],
-                token=token,
-                expires_at=expires_at,
-            )
-
-            # Send reset email
-            await send_password_reset_email(user["email"], token)
-        else:
-            # Don't reveal whether email exists
-            logger.info(f"Password reset requested for non-existent email: {body.email}")
-
+        await supabase_client.request_password_reset(
+            email=body.email.strip().lower(),
+            redirect_to=reset_redirect,
+        )
     except Exception as e:
-        # Log but don't expose errors to prevent enumeration
         logger.error(f"Forgot password error: {e}")
 
-    # Always return success
+    # Always return success to prevent email enumeration
     return {"success": True, "message": "If an account with that email exists, a reset link has been sent."}
+
+
+class ResetPasswordRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    access_token: str = Field(
+        ..., min_length=1, max_length=2048,
+        description="JWT access_token extracted from the Supabase reset link URL fragment"
+    )
+    new_password: str = Field(..., min_length=6, max_length=128)
 
 
 @app.post("/api/auth/reset-password")
 @limiter.limit(AUTH_RATE_LIMIT)
 async def reset_password(request: Request, body: ResetPasswordRequest):
-    """Reset password using a valid reset token."""
-    # Enforce strong password
+    """
+    Set a new password using the access_token from the Supabase recovery email.
+
+    The Supabase reset link lands the user at:
+        /auth/reset-password#access_token=<jwt>&type=recovery
+    The frontend extracts the access_token from the URL fragment and sends
+    it here along with the new password.
+    """
     is_valid, error_msg = validate_password_strength(body.new_password)
     if not is_valid:
         raise HTTPException(status_code=400, detail=error_msg)
 
     try:
         supabase_client = SupabaseClient()
-        result = await supabase_client.use_password_reset_token(body.token, body.new_password)
-        if not result:
-            raise HTTPException(status_code=400, detail="Invalid or expired reset link. Please request a new one.")
+        await supabase_client.update_user_password(body.access_token, body.new_password)
         return {"success": True, "message": "Password has been reset successfully. You can now log in."}
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Reset password error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to reset password. Please try again.")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or expired reset link. Please request a new one.",
+        )
 
 
 @app.get("/api/auth/me", response_model=UserResponse)
-async def get_me(user_id: str):
-    """Get current user info by ID."""
-    try:
-        supabase_client = SupabaseClient()
-        user = await supabase_client.get_user_by_id(user_id)
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found.")
-        return UserResponse(
-            id=user["id"],
-            email=user["email"],
-            created_at=datetime.fromisoformat(user["created_at"].replace("Z", "+00:00"))
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+async def get_me(current_user: dict = Depends(get_current_user)):
+    """Get current user info from the JWT (no DB round-trip needed)."""
+    return UserResponse(
+        id=current_user["sub"],
+        email=current_user.get("email", ""),
+        created_at=datetime.fromtimestamp(current_user.get("iat", 0), tz=timezone.utc),
+    )
 
 
 @app.post("/api/business/analyze", response_model=CustomerProfileResponse)

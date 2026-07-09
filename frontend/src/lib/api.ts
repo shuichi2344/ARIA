@@ -65,10 +65,30 @@ export interface DemographicsResponse {
   age_distribution: Record<string, { percentage: number }>
 }
 
+/** Read the stored session and return the access_token, or null if not logged in. */
+function getAccessToken(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem('aria_session')
+    if (!raw) return null
+    return (JSON.parse(raw) as { access_token?: string }).access_token ?? null
+  } catch {
+    return null
+  }
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getAccessToken()
+  const extraHeaders: Record<string, string> = token
+    ? { Authorization: `Bearer ${token}` }
+    : {}
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...extraHeaders,
+      ...((init?.headers as Record<string, string>) ?? {}),
+    },
   })
   if (!res.ok) {
     const text = await res.text()

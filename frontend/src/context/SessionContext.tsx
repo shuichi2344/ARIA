@@ -1,8 +1,9 @@
 'use client'
 
 /**
- * Session context — mirrors the original app.js localStorage-based auth.
- * Talks to the FastAPI backend (/api/auth/*), NOT Supabase Auth.
+ * Session context — uses Supabase Auth JWTs.
+ * The access_token is persisted in localStorage and sent as
+ * Authorization: Bearer <token> on every API request.
  */
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
@@ -11,6 +12,10 @@ export interface AriaSession {
   id: string
   email: string
   created_at: string
+  access_token: string
+  refresh_token?: string
+  /** True when email confirmation is still pending (Supabase "Confirm email" on) */
+  email_confirmed?: boolean
 }
 
 interface SessionContextValue {
@@ -46,6 +51,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setSession(null)
     localStorage.removeItem('aria_profile')
     localStorage.removeItem('aria_profile_id')
+    localStorage.removeItem('aria_session')
   }
 
   return (

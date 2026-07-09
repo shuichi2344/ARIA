@@ -1,11 +1,8 @@
 """
 Supabase REST API client for database operations.
-This is a fallback when direct PostgreSQL connection doesn't work.
 """
 
 import aiohttp
-import hashlib
-import secrets
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 from aria.config import get_settings
@@ -53,22 +50,6 @@ def _reconstruct_customer_profile(row: Dict[str, Any]) -> Optional[Dict[str, Any
     return profile
 
 
-def _hash_password(password: str) -> str:
-    """Hash a password using SHA-256 with a random salt."""
-    salt = secrets.token_hex(16)
-    hashed = hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
-    return f"{salt}:{hashed}"
-
-
-def _verify_password(password: str, stored_hash: str) -> bool:
-    """Verify a password against a stored hash."""
-    try:
-        salt, hashed = stored_hash.split(":", 1)
-        return hashlib.sha256(f"{salt}{password}".encode()).hexdigest() == hashed
-    except Exception:
-        return False
-
-
 class SupabaseClient:
     """Client for Supabase REST API operations."""
     
@@ -80,201 +61,165 @@ class SupabaseClient:
             'apikey': self.api_key,
             'Authorization': f'Bearer {self.api_key}',
             'Content-Type': 'application/json',
-            'Prefer': 'return=representation'
+            'Prefer': 'return=representation',
         }
 
     # -------------------------------------------------------------------------
-    # User auth methods
+    # User auth methods — all delegated to Supabase Auth
     # -------------------------------------------------------------------------
 
     async def register_user(self, email: str, password: str) -> Dict[str, Any]:
         """
-        Register a new user.
+        Register a new user via Supabase Auth.
 
-        Returns:
-            Dict with the created user data (id, email, created_at)
-        Raises:
-            Exception if email already exists or DB error
+        Supabase sends a confirmation email automatically when email
+        confirmation is enabled in the Dashboard (Authentication > Settings).
+        If "Confirm email" is disabled the user is logged in immediately and
+        the response includes an access_token / refresh_token.
+
+        Returns a dict with at least:
+            id, email, created_at, access_token (if auto-confirmed),
+            refresh_token (if auto-confirmed)
         """
-        # Check if email already taken
-        existing = await self.get_user_by_email(email)
-        if existing:
-            raise Exception("EMAIL_TAKEN")
-
-        url = f"{self.base_url}/rest/v1/users"
-        data = {
+        url = f"{self.base_url}/auth/v1/signup"
+        payload = {
             "email": email.lower().strip(),
-            "password_hash": _hash_password(password),
+            "password": password,
         }
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=data, headers=self.headers) as response:
-                if response.status in [200, 201]:
-                    result = await response.json()
-                    user = result[0] if isinstance(result, list) else result
-                    # Never return the password hash to callers
-                    return {"id": user["user_id"], "email": user["email"], "created_at": user["created_at"]}
-                else:
-                    error_text = await response.text()
-                    raise Exception(f"Supabase API error ({response.status}): {error_text}")
+            async with session.post(url, json=payload, headers=self.headers) as resp:
+                body = await resp.json()
+                if resp.status not in (200, 201):
+                    msg = body.get("msg") or body.get("message") or body.get("error_description") or str(body)
+                    if "already registered" in msg.lower():
+                        raise Exception("EMAIL_TAKEN")
+                    raise Exception(f"Supabase Auth signup error ({resp.status}): {msg}")
+
+                # Supabase returns the user inside body["user"] when email
+                # confirmation is ON, or at the top level when it's OFF.
+                user = body.get("user") or body
+                session_data = body.get("session") or {}
+
+                return {
+                    "id":            user.get("id", ""),
+                    "email":         user.get("email", email),
+                    "created_at":    user.get("created_at", datetime.now(timezone.utc).isoformat()),
+                    "access_token":  session_data.get("access_token") or body.get("access_token"),
+                    "refresh_token": session_data.get("refresh_token") or body.get("refresh_token"),
+                    "email_confirmed": user.get("email_confirmed_at") is not None,
+                }
 
     async def login_user(self, email: str, password: str) -> Dict[str, Any]:
         """
-        Verify credentials and return user data.
+        Authenticate a user via Supabase Auth (password grant).
 
-        Returns:
-            Dict with user data (id, email, created_at)
-        Raises:
-            Exception("INVALID_CREDENTIALS") if email/password don't match
+        Returns a dict with:
+            id, email, created_at, access_token, refresh_token
         """
-        user = await self.get_user_by_email(email)
-        if not user:
-            raise Exception("INVALID_CREDENTIALS")
-
-        if not _verify_password(password, user.get("password_hash", "")):
-            raise Exception("INVALID_CREDENTIALS")
-
-        return {"id": user["user_id"], "email": user["email"], "created_at": user["created_at"]}
-
-    async def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
-        """
-        Fetch a user row by email (includes password_hash for internal use).
-        """
-        url = f"{self.base_url}/rest/v1/users"
-        params = {"email": f"eq.{email.lower().strip()}", "select": "*"}
+        url = f"{self.base_url}/auth/v1/token?grant_type=password"
+        payload = {
+            "email": email.lower().strip(),
+            "password": password,
+        }
 
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, headers=self.headers) as response:
-                if response.status == 200:
-                    result = await response.json()
-                    return result[0] if result else None
-                return None
+            async with session.post(url, json=payload, headers=self.headers) as resp:
+                if resp.status != 200:
+                    raise Exception("INVALID_CREDENTIALS")
+
+                body = await resp.json()
+                user = body.get("user", {})
+
+                return {
+                    "id":            user.get("id", ""),
+                    "email":         user.get("email", email),
+                    "created_at":    user.get("created_at", datetime.now(timezone.utc).isoformat()),
+                    "access_token":  body.get("access_token"),
+                    "refresh_token": body.get("refresh_token"),
+                }
 
     async def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
         """
-        Fetch a user row by id (excludes password_hash).
+        Fetch a Supabase Auth user by ID using the admin endpoint.
+        Requires the service-role key.
         """
-        url = f"{self.base_url}/rest/v1/users"
-        params = {"user_id": f"eq.{user_id}", "select": "user_id,email,created_at"}
+        url = f"{self.base_url}/auth/v1/admin/users/{user_id}"
 
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, headers=self.headers) as response:
-                if response.status == 200:
-                    result = await response.json()
-                    if not result:
-                        return None
-                    row = result[0]
-                    # Normalise to the 'id' key the API layer expects
-                    return {"id": row["user_id"], "email": row["email"], "created_at": row["created_at"]}
+            async with session.get(url, headers=self.headers) as resp:
+                if resp.status == 200:
+                    user = await resp.json()
+                    return {
+                        "id":         user.get("id"),
+                        "email":      user.get("email"),
+                        "created_at": user.get("created_at"),
+                    }
                 return None
 
-    async def change_password(self, user_id: str, current_password: str, new_password: str) -> bool:
+    async def request_password_reset(self, email: str, redirect_to: Optional[str] = None) -> bool:
         """
-        Change a user's password after verifying the current one.
+        Trigger Supabase Auth to send a password-reset email via Supabase SMTP.
+
+        Supabase always returns 200 to prevent email enumeration.
+        The reset link in the email will contain an access_token the user
+        must send to /api/auth/reset-password.
+        """
+        url = f"{self.base_url}/auth/v1/recover"
+        payload: Dict[str, Any] = {"email": email.lower().strip()}
+        if redirect_to:
+            payload["redirect_to"] = redirect_to
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=self.headers) as resp:
+                return resp.status == 200
+
+    async def update_user_password(self, access_token: str, new_password: str) -> bool:
+        """
+        Update a user's password using their JWT access token.
+        This is called after the user clicks the Supabase password-reset link
+        and supplies the token from the URL fragment (#access_token=...).
+
+        Raises Exception with the error message on failure.
+        """
+        url = f"{self.base_url}/auth/v1/user"
+        payload = {"password": new_password}
+
+        # Use the user's own JWT, not the service-role key
+        user_headers = {
+            **self.headers,
+            "Authorization": f"Bearer {access_token}",
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.put(url, json=payload, headers=user_headers) as resp:
+                if resp.status == 200:
+                    return True
+                body = await resp.json()
+                msg = body.get("msg") or body.get("message") or body.get("error_description") or "Failed to update password"
+                raise Exception(msg)
+
+    async def change_password(self, access_token: str, new_password: str) -> bool:
+        """
+        Change a user's password.  The caller must supply a valid JWT —
+        Supabase Auth handles credential verification internally.
+
+        Args:
+            access_token: The user's current Supabase JWT.
+            new_password: The new password to set.
 
         Returns:
-            True if password was changed successfully
+            True on success.
         Raises:
-            Exception("INVALID_CREDENTIALS") if current password is wrong
-            Exception("USER_NOT_FOUND") if user doesn't exist
+            Exception("INVALID_CREDENTIALS") if the token is invalid/expired.
         """
-        # Fetch user with password hash
-        url = f"{self.base_url}/rest/v1/users"
-        params = {"user_id": f"eq.{user_id}", "select": "*"}
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, headers=self.headers) as response:
-                if response.status != 200:
-                    raise Exception("USER_NOT_FOUND")
-                result = await response.json()
-                if not result:
-                    raise Exception("USER_NOT_FOUND")
-                user = result[0]
-
-        # Verify current password
-        if not _verify_password(current_password, user.get("password_hash", "")):
-            raise Exception("INVALID_CREDENTIALS")
-
-        # Update with new password hash
-        new_hash = _hash_password(new_password)
-        update_url = f"{self.base_url}/rest/v1/users?user_id=eq.{user_id}"
-        headers = {**self.headers, "Prefer": "return=minimal"}
-
-        async with aiohttp.ClientSession() as session:
-            async with session.patch(update_url, json={"password_hash": new_hash}, headers=headers) as response:
-                if response.status in [200, 204]:
-                    return True
-                error_text = await response.text()
-                raise Exception(f"Failed to update password: {error_text}")
-
-    async def create_password_reset_token(self, user_id: str, token: str, expires_at: str) -> bool:
-        """Store a password reset token in the database."""
-        url = f"{self.base_url}/rest/v1/password_reset_tokens"
-        data = {
-            "user_id": user_id,
-            "token": token,
-            "expires_at": expires_at,
-            "used": False,
-        }
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=data, headers=self.headers) as response:
-                return response.status in [200, 201]
-
-    async def use_password_reset_token(self, token: str, new_password: str) -> bool:
-        """
-        Validate a reset token and update the user's password.
-        Marks the token as used. Returns False if token is invalid/expired/used.
-        """
-        from datetime import datetime, timezone as tz
-
-        # Fetch the token
-        url = f"{self.base_url}/rest/v1/password_reset_tokens"
-        params = {"token": f"eq.{token}", "used": "eq.false", "select": "*"}
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, headers=self.headers) as response:
-                if response.status != 200:
-                    print(f"[DEBUG] Reset token lookup failed with status {response.status}")
-                    return False
-                result = await response.json()
-                if not result:
-                    print(f"[DEBUG] Reset token not found or already used (token: {token[:8]}...)")
-                    return False
-                token_row = result[0]
-
-        # Check expiry
-        expires_at = token_row.get("expires_at", "")
         try:
-            # Supabase returns timestamp without timezone — treat as UTC
-            expiry_str = expires_at.replace("Z", "+00:00")
-            expiry = datetime.fromisoformat(expiry_str)
-            # If naive (no timezone info), assume UTC
-            if expiry.tzinfo is None:
-                expiry = expiry.replace(tzinfo=tz.utc)
-            if datetime.now(tz.utc) > expiry:
-                return False
-        except Exception:
-            return False
-
-        user_id = token_row["user_id"]
-
-        # Update password
-        new_hash = _hash_password(new_password)
-        update_url = f"{self.base_url}/rest/v1/users?user_id=eq.{user_id}"
-        headers = {**self.headers, "Prefer": "return=minimal"}
-
-        async with aiohttp.ClientSession() as session:
-            async with session.patch(update_url, json={"password_hash": new_hash}, headers=headers) as response:
-                if response.status not in [200, 204]:
-                    return False
-
-        # Mark token as used
-        token_update_url = f"{self.base_url}/rest/v1/password_reset_tokens?token=eq.{token}"
-        async with aiohttp.ClientSession() as session:
-            async with session.patch(token_update_url, json={"used": True}, headers=headers) as response:
-                pass  # Best effort
-
-        return True
+            return await self.update_user_password(access_token, new_password)
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "invalid" in msg or "expired" in msg or "jwt" in msg:
+                raise Exception("INVALID_CREDENTIALS")
+            raise
 
     # -------------------------------------------------------------------------
     # Business profile methods
@@ -340,14 +285,41 @@ class SupabaseClient:
         # Remove None values
         data = {k: v for k, v in data.items() if v is not None}
         
+        insert_headers = {
+            **self.headers,
+            'Prefer': 'return=representation',
+        }
+
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=data, headers=self.headers) as response:
+            async with session.post(url, json=data, headers=insert_headers) as response:
                 if response.status in [200, 201]:
                     result = await response.json()
-                    return result[0] if isinstance(result, list) else result
+                    if isinstance(result, list) and result:
+                        return result[0]
+                    if isinstance(result, dict) and result:
+                        return result
+                    # Supabase returned empty — re-fetch the just-inserted row by user_id + name
+                    return await self._fetch_latest_profile(data["user_id"])
                 else:
                     error_text = await response.text()
                     raise Exception(f"Supabase API error ({response.status}): {error_text}")
+
+    async def _fetch_latest_profile(self, user_id: str) -> Dict[str, Any]:
+        """Fallback: fetch the most recently created profile for a user."""
+        url = f"{self.base_url}/rest/v1/business_profiles"
+        params = {
+            "user_id": f"eq.{user_id}",
+            "order": "created_at.desc",
+            "limit": "1",
+            "select": "*",
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, headers=self.headers) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    if result:
+                        return result[0]
+                raise Exception("Profile was inserted but could not be retrieved.")
     
     async def get_business_profile(self, profile_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -362,10 +334,12 @@ class SupabaseClient:
                 if response.status == 200:
                     result = await response.json()
                     if not result:
+                        print(f"[WARN] get_business_profile: empty result for {profile_id}, status={response.status}")
                         return None
                     row = result[0]
                     row['customer_profile'] = _reconstruct_customer_profile(row)
                     return row
+                print(f"[WARN] get_business_profile: status={response.status} for {profile_id}")
                 return None
 
     async def update_business_profile(
@@ -382,8 +356,8 @@ class SupabaseClient:
         customer_profile: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Update an existing business profile."""
-        url = f"{self.base_url}/rest/v1/business_profiles"
-        params = {"profile_id": f"eq.{profile_id}"}
+        # PostgREST requires the filter in the URL for PATCH
+        url = f"{self.base_url}/rest/v1/business_profiles?profile_id=eq.{profile_id}"
         
         data: Dict[str, Any] = {
             "business_name": business_name,
@@ -421,12 +395,21 @@ class SupabaseClient:
         
         data = {k: v for k, v in data.items() if v is not None}
         
-        headers = {**self.headers, 'Prefer': 'return=representation'}
+        patch_headers = {**self.headers, 'Prefer': 'return=representation'}
         async with aiohttp.ClientSession() as session:
-            async with session.patch(url, json=data, params=params, headers=headers) as response:
+            async with session.patch(url, json=data, headers=patch_headers) as response:
                 if response.status in [200, 204]:
                     result = await response.json()
-                    return result[0] if isinstance(result, list) and result else data
+                    if isinstance(result, list) and result:
+                        return result[0]
+                    if isinstance(result, dict) and result:
+                        return result
+                    # Empty response — re-fetch the updated row
+                    print(f"[DEBUG] PATCH returned empty, re-fetching profile {profile_id}")
+                    fetched = await self.get_business_profile(profile_id)
+                    if fetched:
+                        return fetched
+                    raise Exception(f"Profile {profile_id} could not be retrieved after update.")
                 else:
                     error_text = await response.text()
                     raise Exception(f"Failed to update profile: {error_text}")
@@ -480,7 +463,7 @@ class SupabaseClient:
         description: str,
         parameters: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Save a scenario to the database."""
+        """Save a scenario to the database. Returns the saved row with scenario_id."""
         url = f"{self.base_url}/rest/v1/scenarios"
         data = {
             "profile_id": business_profile_id,
@@ -489,11 +472,25 @@ class SupabaseClient:
             "description": description,
             "parameters": parameters,
         }
+        insert_headers = {**self.headers, 'Prefer': 'return=representation'}
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=data, headers=self.headers) as response:
+            async with session.post(url, json=data, headers=insert_headers) as response:
                 if response.status in [200, 201]:
                     result = await response.json()
-                    return result[0] if isinstance(result, list) else result
+                    if isinstance(result, list) and result:
+                        return result[0]
+                    if isinstance(result, dict) and result:
+                        return result
+                    # Empty response — fetch the latest scenario for this profile
+                    async with session.get(
+                        url,
+                        params={"profile_id": f"eq.{business_profile_id}", "order": "created_at.desc", "limit": "1"},
+                        headers=self.headers,
+                    ) as fetch_resp:
+                        rows = await fetch_resp.json() if fetch_resp.status == 200 else []
+                        if rows:
+                            return rows[0]
+                    raise Exception("Scenario inserted but could not be retrieved.")
                 else:
                     error_text = await response.text()
                     raise Exception(f"Failed to save scenario: {error_text}")
@@ -508,18 +505,7 @@ class SupabaseClient:
         monte_carlo_total_runs: int = 1,
         monte_carlo_converged: Optional[bool] = None,
     ) -> Dict[str, Any]:
-        """
-        Save a simulation record to the database.
-        
-        Args:
-            scenario_id: UUID of the scenario
-            agent_count: Number of agents in simulation
-            status: Simulation status
-            started_at: ISO timestamp when simulation started
-            monte_carlo_enabled: Whether Monte Carlo CV was used
-            monte_carlo_total_runs: Total number of MC runs executed
-            monte_carlo_converged: Whether MC converged (WCI CV <= threshold)
-        """
+        """Save a simulation record. Returns the saved row with simulation_id."""
         url = f"{self.base_url}/rest/v1/simulations"
         now = datetime.now(timezone.utc).isoformat()
         data = {
@@ -534,11 +520,25 @@ class SupabaseClient:
             "monte_carlo_total_runs": monte_carlo_total_runs,
             "monte_carlo_converged": monte_carlo_converged,
         }
+        insert_headers = {**self.headers, 'Prefer': 'return=representation'}
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=data, headers=self.headers) as response:
+            async with session.post(url, json=data, headers=insert_headers) as response:
                 if response.status in [200, 201]:
                     result = await response.json()
-                    return result[0] if isinstance(result, list) else result
+                    if isinstance(result, list) and result:
+                        return result[0]
+                    if isinstance(result, dict) and result:
+                        return result
+                    # Empty response — fetch the latest simulation for this scenario
+                    async with session.get(
+                        url,
+                        params={"scenario_id": f"eq.{scenario_id}", "order": "created_at.desc", "limit": "1"},
+                        headers=self.headers,
+                    ) as fetch_resp:
+                        rows = await fetch_resp.json() if fetch_resp.status == 200 else []
+                        if rows:
+                            return rows[0]
+                    raise Exception("Simulation inserted but could not be retrieved.")
                 else:
                     error_text = await response.text()
                     raise Exception(f"Failed to save simulation: {error_text}")
@@ -552,11 +552,17 @@ class SupabaseClient:
         if not events:
             return
         url = f"{self.base_url}/rest/v1/simulation_events"
+        # Use return=minimal for bulk inserts — avoids large response payloads
+        bulk_headers = {**self.headers, 'Prefer': 'return=minimal'}
+        # Insert in chunks of 100 to avoid request size limits
+        chunk_size = 100
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=events, headers=self.headers) as response:
-                if response.status not in [200, 201]:
-                    error_text = await response.text()
-                    print(f"[WARN] Failed to save simulation events: {error_text}")
+            for i in range(0, len(events), chunk_size):
+                chunk = events[i:i + chunk_size]
+                async with session.post(url, json=chunk, headers=bulk_headers) as response:
+                    if response.status not in [200, 201, 204]:
+                        error_text = await response.text()
+                        print(f"[WARN] Failed to save simulation events chunk {i}-{i+len(chunk)}: {error_text}")
 
     async def save_simulation_report(
         self,
@@ -564,14 +570,7 @@ class SupabaseClient:
         report: Dict[str, Any],
         monte_carlo_summary: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """
-        Save simulation report to the database.
-        
-        Args:
-            simulation_id: UUID of the simulation
-            report: Report data with risk_summary, archetype_breakdown, recommendations
-            monte_carlo_summary: Optional Monte Carlo convergence statistics
-        """
+        """Save simulation report to the database."""
         url = f"{self.base_url}/rest/v1/simulation_reports"
         data = {
             "simulation_id": simulation_id,
@@ -585,11 +584,12 @@ class SupabaseClient:
             "key_reasons": report.get("key_reasons", []),
             "monte_carlo_summary": monte_carlo_summary,
         }
+        insert_headers = {**self.headers, 'Prefer': 'return=minimal'}
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=data, headers=self.headers) as response:
-                if response.status not in [200, 201]:
+            async with session.post(url, json=data, headers=insert_headers) as response:
+                if response.status not in [200, 201, 204]:
                     error_text = await response.text()
-                    print(f"[WARN] Failed to save report: {error_text}")
+                    print(f"[WARN] Failed to save report for sim {simulation_id}: {error_text}")
 
     async def list_simulation_history(self, profile_id: str) -> List[Dict[str, Any]]:
         """
@@ -619,7 +619,6 @@ class SupabaseClient:
         sim_params = {
             "scenario_id": f"in.({','.join(scenario_ids)})",
             "select": "simulation_id,scenario_id,status,agent_count,completed_at,created_at",
-            "status": "eq.completed",
             "order": "completed_at.desc",
         }
         async with aiohttp.ClientSession() as session:
@@ -724,9 +723,10 @@ class SupabaseClient:
         return history
 
     async def delete_simulation(self, simulation_id: str) -> bool:
-        """Delete a simulation and its related data."""
+        """Delete a simulation and all its related data (cascade order)."""
+        delete_headers = {**self.headers, 'Prefer': 'return=minimal'}
         async with aiohttp.ClientSession() as session:
-            # Get the scenario_id before deleting (to clean up orphaned scenario)
+            # 1. Get scenario_id before deleting (to clean up orphaned scenario)
             sim_url = f"{self.base_url}/rest/v1/simulations"
             async with session.get(
                 sim_url,
@@ -739,52 +739,48 @@ class SupabaseClient:
                     if rows:
                         scenario_id = rows[0].get("scenario_id")
 
-            # Delete simulation events first (FK dependency)
-            events_url = f"{self.base_url}/rest/v1/simulation_events"
+            # 2. Delete simulation events (FK → simulation)
             async with session.delete(
-                events_url,
+                f"{self.base_url}/rest/v1/simulation_events",
                 params={"simulation_id": f"eq.{simulation_id}"},
-                headers=self.headers,
+                headers=delete_headers,
             ) as resp:
                 if resp.status not in [200, 204]:
                     print(f"[WARN] Failed to delete events for sim {simulation_id}: {resp.status}")
 
-            # Delete simulation report (FK dependency)
-            reports_url = f"{self.base_url}/rest/v1/simulation_reports"
+            # 3. Delete simulation report (FK → simulation)
             async with session.delete(
-                reports_url,
+                f"{self.base_url}/rest/v1/simulation_reports",
                 params={"simulation_id": f"eq.{simulation_id}"},
-                headers=self.headers,
+                headers=delete_headers,
             ) as resp:
                 if resp.status not in [200, 204]:
                     print(f"[WARN] Failed to delete report for sim {simulation_id}: {resp.status}")
 
-            # Delete the simulation itself
+            # 4. Delete the simulation itself
             async with session.delete(
                 sim_url,
                 params={"simulation_id": f"eq.{simulation_id}"},
-                headers=self.headers,
+                headers=delete_headers,
             ) as response:
                 if response.status not in [200, 204]:
                     print(f"[ERROR] Failed to delete simulation {simulation_id}: {response.status}")
                     return False
 
-            # Delete the orphaned scenario (only if no other simulations reference it)
+            # 5. Delete the orphaned scenario only if no other simulations use it
             if scenario_id:
-                # Check if other simulations use this scenario
                 async with session.get(
                     sim_url,
                     params={"scenario_id": f"eq.{scenario_id}", "select": "simulation_id", "limit": "1"},
                     headers=self.headers,
                 ) as resp:
                     other_sims = await resp.json() if resp.status == 200 else []
-                
+
                 if not other_sims:
-                    scenarios_url = f"{self.base_url}/rest/v1/scenarios"
                     async with session.delete(
-                        scenarios_url,
+                        f"{self.base_url}/rest/v1/scenarios",
                         params={"scenario_id": f"eq.{scenario_id}"},
-                        headers=self.headers,
+                        headers=delete_headers,
                     ) as resp:
                         if resp.status not in [200, 204]:
                             print(f"[WARN] Failed to delete scenario {scenario_id}: {resp.status}")
@@ -819,15 +815,28 @@ class SupabaseClient:
     ) -> Optional[str]:
         """Create a chat session and return its ID."""
         url = f"{self.base_url}/rest/v1/chat_sessions"
-        data = {"user_id": user_id}
+        data: Dict[str, Any] = {"user_id": user_id}
         if profile_id:
             data["profile_id"] = profile_id
+        insert_headers = {**self.headers, 'Prefer': 'return=representation'}
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=data, headers=self.headers) as response:
+            async with session.post(url, json=data, headers=insert_headers) as response:
                 if response.status in [200, 201]:
                     result = await response.json()
-                    row = result[0] if isinstance(result, list) else result
-                    return row.get("session_id")
+                    row = (result[0] if isinstance(result, list) and result
+                           else result if isinstance(result, dict) and result
+                           else None)
+                    if row:
+                        return row.get("session_id")
+                    # Empty response — fetch latest session for this user
+                    async with session.get(
+                        url,
+                        params={"user_id": f"eq.{user_id}", "order": "started_at.desc", "limit": "1"},
+                        headers=self.headers,
+                    ) as fetch_resp:
+                        rows = await fetch_resp.json() if fetch_resp.status == 200 else []
+                        if rows:
+                            return rows[0].get("session_id")
                 return None
 
     async def list_chat_messages(self, session_id: str) -> List[Dict[str, Any]]:

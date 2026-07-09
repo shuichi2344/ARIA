@@ -1,7 +1,16 @@
 'use client'
 
+/**
+ * Password Reset page — handles the Supabase recovery link.
+ *
+ * When the user clicks the reset link Supabase emails them, they land here at:
+ *   /auth/reset-password#access_token=<jwt>&type=recovery
+ *
+ * We extract the token from the URL *fragment* (not search params, because
+ * fragments are never sent to the server) and pass it to the backend.
+ */
+
 import { useState, useEffect } from 'react'
-import { useSearchParams } from 'next/navigation'
 import { ArrowRight, Loader2 } from 'lucide-react'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -14,10 +23,14 @@ function validatePassword(password: string): string | null {
   return null
 }
 
-export default function ResetPasswordPage() {
-  const searchParams = useSearchParams()
-  const token = searchParams.get('token')
+/** Parse the URL fragment into a key→value map. */
+function parseFragment(hash: string): Record<string, string> {
+  const fragment = hash.startsWith('#') ? hash.slice(1) : hash
+  return Object.fromEntries(new URLSearchParams(fragment))
+}
 
+export default function ResetPasswordPage() {
+  const [accessToken, setAccessToken] = useState<string | null>(null)
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
@@ -25,10 +38,19 @@ export default function ResetPasswordPage() {
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    if (!token) {
-      setError('Invalid reset link. No token provided.')
+    if (typeof window === 'undefined') return
+    const params = parseFragment(window.location.hash)
+    const token = params['access_token']
+    const type  = params['type']
+
+    if (!token || type !== 'recovery') {
+      setError('Invalid or missing reset link. Please request a new one.')
+      return
     }
-  }, [token])
+    setAccessToken(token)
+    // Clean the fragment so the token isn't visible or bookmarkable
+    window.history.replaceState(null, '', window.location.pathname)
+  }, [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -38,10 +60,11 @@ export default function ResetPasswordPage() {
       setError('Passwords do not match.')
       return
     }
-
     const pwError = validatePassword(newPassword)
-    if (pwError) {
-      setError(pwError)
+    if (pwError) { setError(pwError); return }
+
+    if (!accessToken) {
+      setError('Missing reset token. Please request a new reset link.')
       return
     }
 
@@ -50,7 +73,7 @@ export default function ResetPasswordPage() {
       const res = await fetch(`${API_BASE}/api/auth/reset-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, new_password: newPassword }),
+        body: JSON.stringify({ access_token: accessToken, new_password: newPassword }),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -122,6 +145,7 @@ export default function ResetPasswordPage() {
                 required
                 minLength={6}
                 autoComplete="new-password"
+                disabled={!accessToken}
                 style={{
                   width: '100%', padding: '0.875rem 1.125rem',
                   fontSize: '1rem', border: '2px solid #e5e7eb',
@@ -144,6 +168,7 @@ export default function ResetPasswordPage() {
                 placeholder="Repeat your new password"
                 required
                 autoComplete="new-password"
+                disabled={!accessToken}
                 style={{
                   width: '100%', padding: '0.875rem 1.125rem',
                   fontSize: '1rem', border: '2px solid #e5e7eb',
@@ -164,14 +189,14 @@ export default function ResetPasswordPage() {
 
             <button
               type="submit"
-              disabled={loading || !token}
+              disabled={loading || !accessToken}
               style={{
                 width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
                 background: 'var(--accent, #7c2d3e)', color: '#fff',
                 fontSize: '1.125rem', fontWeight: 600,
                 padding: '1rem', border: 'none', borderRadius: 8,
-                cursor: loading ? 'not-allowed' : 'pointer',
-                opacity: loading ? 0.6 : 1,
+                cursor: (loading || !accessToken) ? 'not-allowed' : 'pointer',
+                opacity: (loading || !accessToken) ? 0.6 : 1,
                 boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
                 marginTop: '0.5rem',
               }}

@@ -20,8 +20,10 @@ class Settings(BaseSettings):
     
     # Supabase Configuration
     supabase_url: HttpUrl = Field(..., description="Supabase project URL")
-    supabase_key: str = Field(..., description="Supabase anon/service key")
+    supabase_key: str = Field(..., description="Supabase service-role key (server-side only)")
+    supabase_anon_key: Optional[str] = Field(None, description="Supabase anon/public key (for auth)")
     supabase_db_password: str = Field(..., description="Supabase database password")
+    supabase_jwt_secret: Optional[str] = Field(None, description="Supabase JWT secret (from project settings > API)")
     
     # DOSM API Configuration (optional)
     dosm_api_key: Optional[str] = Field(None, description="DOSM API key (optional)")
@@ -60,12 +62,13 @@ class Settings(BaseSettings):
     debug: bool = Field(default=True, description="Debug mode")
     app_url: str = Field(default="http://localhost:3000", description="Frontend app URL for email links")
     
-    # SMTP Configuration (for password reset emails)
-    smtp_host: Optional[str] = Field(default=None, description="SMTP server host")
-    smtp_port: int = Field(default=587, description="SMTP server port")
-    smtp_user: Optional[str] = Field(default=None, description="SMTP username/email")
-    smtp_password: Optional[str] = Field(default=None, description="SMTP password")
-    smtp_from_email: Optional[str] = Field(default=None, description="From email address (defaults to smtp_user)")
+    # SMTP — no longer used; email delivery handled by Supabase Auth SMTP.
+    # These fields are kept as ignored optionals to avoid breaking existing .env files.
+    smtp_host: Optional[str] = Field(default=None, description="Unused — configure SMTP in Supabase Dashboard")
+    smtp_port: int = Field(default=587, description="Unused")
+    smtp_user: Optional[str] = Field(default=None, description="Unused")
+    smtp_password: Optional[str] = Field(default=None, description="Unused")
+    smtp_from_email: Optional[str] = Field(default=None, description="Unused")
     
     # Resource Limits
     max_vram_gb: float = Field(default=6.0, description="Maximum VRAM usage in GB")

@@ -6,7 +6,14 @@ import { X, ArrowRight, Loader2 } from 'lucide-react'
 interface Props {
   defaultTab?: 'login' | 'register'
   onClose: () => void
-  onSuccess: (user: { id: string; email: string; created_at: string }) => void
+  onSuccess: (user: {
+    id: string
+    email: string
+    created_at: string
+    access_token: string
+    refresh_token?: string
+    email_confirmed?: boolean
+  }) => void
 }
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -84,6 +91,10 @@ export default function AuthModal({ defaultTab = 'login', onClose, onSuccess }: 
       })
       const data = await res.json()
       if (!res.ok) { setLoginError(data.detail || 'Login failed.'); return }
+      if (!data.access_token) {
+        setLoginError('Login succeeded but no session token was returned. Please try again.')
+        return
+      }
       onSuccess(data)
     } catch {
       setLoginError('Could not reach the server. Make sure the API is running.')
@@ -96,7 +107,6 @@ export default function AuthModal({ defaultTab = 'login', onClose, onSuccess }: 
     e.preventDefault()
     setRegError('')
     if (regPassword !== regConfirm) { setRegError('Passwords do not match.'); return }
-    // Validate password strength
     const pwError = validatePassword(regPassword)
     if (pwError) { setRegError(pwError); return }
     setRegLoading(true)
@@ -108,6 +118,11 @@ export default function AuthModal({ defaultTab = 'login', onClose, onSuccess }: 
       })
       const data = await res.json()
       if (!res.ok) { setRegError(data.detail || 'Registration failed.'); return }
+      // If email confirmation is required, access_token is null until confirmed
+      if (data.email_confirmed === false || !data.access_token) {
+        setRegError('Account created! Please check your email to confirm your address before logging in.')
+        return
+      }
       onSuccess(data)
     } catch {
       setRegError('Could not reach the server. Make sure the API is running.')

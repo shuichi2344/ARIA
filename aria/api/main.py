@@ -921,17 +921,6 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
                 print(f"[INFO] Loaded business profile: {profile['business_name']}")
                 print(f"[INFO] Price range: RM{profile['price_range_min']:.2f} - RM{profile['price_range_max']:.2f}")
         
-        # Fetch sales history context to calibrate agent behaviour
-        sales_context = ""
-        if body.profile_id:
-            try:
-                from aria.sales.sales_context import build_sales_context
-                sales_context = await build_sales_context(body.profile_id)
-                if sales_context:
-                    print(f"[INFO] Sales context loaded ({len(sales_context)} chars)")
-            except Exception as _sc_err:
-                print(f"[WARN] Could not load sales context: {_sc_err}")
-
         # Fallback: use business_profile from scenario if DB fetch didn't populate profile
         if not profile:
             profile = body.scenario.get("business_profile") or {}
@@ -1005,7 +994,6 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
                 "target_customer_constraints": target_customer_constraints,
                 "b2b_percentage": body.b2b_percentage,
                 "agents_cached":  True,  # Flag: skip LLM profile generation
-                "sales_context":  sales_context,
                 # Monte Carlo configuration
                 "monte_carlo_enabled": body.monte_carlo_enabled,
                 "monte_carlo_config": MonteCarloConfig(
@@ -1255,7 +1243,6 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
             "b2b_percentage": body.b2b_percentage,
             "agents_cached":  False,
             "cache_key":      cache_key,  # For caching after LLM profiles are generated
-            "sales_context":  sales_context,
             # Monte Carlo configuration
             "monte_carlo_enabled": body.monte_carlo_enabled,
             "monte_carlo_config": MonteCarloConfig(
@@ -1884,13 +1871,10 @@ async def _run_simulation_single(sim_id: str, run_number: int = 1) -> Dict[str, 
     total_churned = 0
     agent_decisions = []
 
-    sales_context = sim.get("sales_context", "")
-
     scenario_context = {
         'scenario_type': scenario_type,
         'description': scenario.get('description', ''),
         'parameters': params,
-        'sales_context': sales_context,
     }
 
     # Lookup dict: unique_id → agent dict (avoids index-based access)
@@ -2801,139 +2785,6 @@ def _calc_spend(agent: Dict, price_change: float, business_profile: Optional[Dic
     # Fallback: income-based estimate
     base = {"B40": 12, "M40": 25, "T20": 45}.get(agent.get("income_level", "M40"), 20)
     return round(base * (1 + price_change) * random.uniform(0.8, 1.2), 2)
-
-
-# ---------------------------------------------------------------------------
-# Sales endpoints — Smart Sales Insights
-# ---------------------------------------------------------------------------
-
-
-@app.get("/api/sales/records")
-@limiter.limit(GENERAL_RATE_LIMIT)
-async def get_sales_records(request: Request, profile_id: str):
-    """Get all sales records for a business profile, ordered by date descending."""
-    validate_uuid(profile_id, "profile_id")
-
-    supabase = SupabaseClient()
-    url = f"{supabase.base_url}/rest/v1/sales_records"
-    params = {
-        "profile_id": f"eq.{profile_id}",
-        "select": "record_id,sale_date,total_sales,transaction_count,source,notes",
-        "order": "sale_date.desc",
-        "limit": "500",
-    }
-
-    import aiohttp
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=params, headers=supabase.headers) as response:
-            if response.status == 200:
-                records = await response.json()
-                return {"records": records}
-            else:
-                error_text = await response.text()
-                raise HTTPException(status_code=500, detail=f"Failed to fetch records: {error_text}")
-
-
-class ManualSalesEntry(BaseModel):
-    """Request model for manually entering a sales record."""
-    model_config = {"extra": "forbid"}
-    profile_id: str = Field(..., min_length=1, max_length=100)
-    sale_date: str = Field(..., min_length=10, max_length=10, pattern=r"^\d{4}-\d{2}-\d{2}$")
-    total_sales: float = Field(..., ge=0)
-    transaction_count: Optional[int] = Field(None, ge=0)
-
-
-@app.post("/api/sales/manual")
-@limiter.limit(GENERAL_RATE_LIMIT)
-async def add_manual_sales(request: Request, body: ManualSalesEntry):
-    """Manually add a sales record for a specific date."""
-    validate_uuid(body.profile_id, "profile_id")
-
-    supabase = SupabaseClient()
-    try:
-        await _insert_sales_record(
-            supabase,
-            profile_id=body.profile_id,
-            sale_date=body.sale_date,
-            total_sales=body.total_sales,
-            transaction_count=body.transaction_count,
-            source='manual',
-            notes='Manually entered',
-        )
-        return {"status": "success", "sale_date": body.sale_date, "total_sales": body.total_sales}
-    except Exception as e:
-        if 'duplicate' in str(e).lower() or '23505' in str(e):
-            raise HTTPException(status_code=409, detail=f"An entry for {body.sale_date} already exists.")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.delete("/api/sales/records/{record_id}")
-@limiter.limit(GENERAL_RATE_LIMIT)
-async def delete_sales_record(request: Request, record_id: str, profile_id: str):
-    """Delete a single sales record by ID. Requires profile_id for ownership check."""
-    validate_uuid(record_id, "record_id")
-    validate_uuid(profile_id, "profile_id")
-
-    supabase = SupabaseClient()
-    import aiohttp as _aiohttp
-
-    # Ownership check: fetch the record first
-    fetch_url = f"{supabase.base_url}/rest/v1/sales_records?record_id=eq.{record_id}&profile_id=eq.{profile_id}&select=record_id"
-    async with _aiohttp.ClientSession() as session:
-        async with session.get(fetch_url, headers=supabase.headers) as resp:
-            if resp.status != 200:
-                raise HTTPException(status_code=500, detail="Failed to verify record ownership")
-            rows = await resp.json()
-
-    if not rows:
-        raise HTTPException(status_code=404, detail="Record not found or does not belong to this profile")
-
-    # Delete
-    delete_url = f"{supabase.base_url}/rest/v1/sales_records?record_id=eq.{record_id}&profile_id=eq.{profile_id}"
-    async with _aiohttp.ClientSession() as session:
-        async with session.delete(delete_url, headers=supabase.headers) as resp:
-            if resp.status not in (200, 204):
-                err = await resp.text()
-                raise HTTPException(status_code=500, detail=f"Failed to delete record: {err}")
-
-    return {"status": "deleted", "record_id": record_id}
-
-
-async def _insert_sales_record(
-    supabase: SupabaseClient,
-    profile_id: str,
-    sale_date: str,
-    total_sales: float,
-    transaction_count: Optional[int],
-    source: str,
-    notes: Optional[str],
-) -> Dict[str, Any]:
-    """Insert a single sales record via Supabase REST API."""
-    import aiohttp
-
-    url = f"{supabase.base_url}/rest/v1/sales_records"
-    data = {
-        "profile_id": profile_id,
-        "sale_date": sale_date,
-        "total_sales": total_sales,
-        "source": source,
-    }
-    if transaction_count is not None:
-        data["transaction_count"] = transaction_count
-    if notes:
-        data["notes"] = notes
-
-    # Use upsert to handle duplicates gracefully
-    headers = {**supabase.headers, "Prefer": "resolution=merge-duplicates,return=representation"}
-
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=data, headers=headers) as response:
-            if response.status in [200, 201]:
-                result = await response.json()
-                return result[0] if isinstance(result, list) else result
-            else:
-                error_text = await response.text()
-                raise Exception(f"Insert failed ({response.status}): {error_text}")
 
 
 if __name__ == "__main__":

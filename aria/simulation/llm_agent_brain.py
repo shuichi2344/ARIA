@@ -233,7 +233,6 @@ Profile:"""
         business_context: Optional[Dict] = None,
         peer_messages: Optional[List[str]] = None,
         income_level: Optional[str] = None,
-        sales_context: str = "",
     ) -> Dict:
         """
         Unified LLM call: decides (visit/skip/churn) AND generates a message
@@ -246,7 +245,7 @@ Profile:"""
         customer_type = (business_context or {}).get('customer_type', 'B2C')
         
         if customer_type == 'B2B':
-            return await self._b2b_decision(agent_profile, scenario_context, business_context, peer_messages, income_level, sales_context)
+            return await self._b2b_decision(agent_profile, scenario_context, business_context, peer_messages, income_level)
         
         scenario_desc = scenario_context.get('description', '')
         scenario_type = scenario_context.get('scenario_type', '')
@@ -315,7 +314,6 @@ Profile:"""
 
 SCENARIO: {scenario_desc}
 {peer_block}{income_block}
-{f"{chr(10)}{sales_context}" if sales_context else ""}
 Based on who you are and the scenario above, decide: will you VISIT, SKIP, or CHURN (stop going permanently)?
 
 {guidelines}
@@ -388,7 +386,6 @@ Spend: [amount in RM you'd spend if visiting, or 0]"""
         business_context: Optional[Dict] = None,
         peer_messages: Optional[List[str]] = None,
         business_size: Optional[str] = None,
-        sales_context: str = "",
     ) -> Dict:
         """
         B2B-specific decision making. Uses procurement/relationship logic
@@ -461,7 +458,6 @@ Spend: [amount in RM you'd spend if visiting, or 0]"""
 
 Your supplier has made this change: {scenario_desc}
 {peer_block}{size_block}
-{f"{chr(10)}{sales_context}" if sales_context else ""}
 As a business customer, decide: will you CONTINUE (keep ordering as usual), REDUCE (order less or delay), or SWITCH (find a new supplier)?
 
 DECISION GUIDELINES:

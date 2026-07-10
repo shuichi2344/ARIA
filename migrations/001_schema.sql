@@ -118,22 +118,4 @@ CREATE TABLE public.simulations (
 -- Index for filtering Monte Carlo simulations
 CREATE INDEX simulations_monte_carlo_idx ON public.simulations(monte_carlo_enabled, monte_carlo_converged);
 
-CREATE TABLE public.sales_records (
-  record_id uuid NOT NULL DEFAULT uuid_generate_v4(),
-  profile_id uuid NOT NULL,
-  sale_date date NOT NULL,
-  total_sales double precision NOT NULL CHECK (total_sales >= 0),
-  transaction_count integer DEFAULT NULL CHECK (transaction_count >= 0),
-  source varchar(50) NOT NULL DEFAULT 'manual'
-    CHECK (source IN ('manual')),
-  notes text DEFAULT NULL,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT sales_records_pkey PRIMARY KEY (record_id),
-  CONSTRAINT sales_records_profile_fk FOREIGN KEY (profile_id) REFERENCES public.business_profiles(profile_id) ON DELETE CASCADE
-);
-
--- Index for efficient date-range queries
-CREATE INDEX sales_records_profile_date_idx ON public.sales_records (profile_id, sale_date DESC);
-
--- Prevent duplicate entries for same business + same date
-CREATE UNIQUE INDEX sales_records_unique_day_idx ON public.sales_records (profile_id, sale_date);
+-- sales_records table removed (feature dropped)

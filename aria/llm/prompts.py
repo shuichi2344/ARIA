@@ -81,12 +81,10 @@ def scenario_suggestion_with_context(
     news_articles: List[Dict[str, Any]],
     economic_indicators: Dict[str, Any],
     holiday_context: str = "",
-    sales_context: str = "",
 ) -> str:
     """
     Generate prompt for suggesting scenarios with real-world context.
-    Enhanced with News API, DOSM economic data, Malaysia holiday calendar,
-    and optional sales history context.
+    Enhanced with News API, DOSM economic data, and Malaysia holiday calendar.
     """
     prompt = f"""You are a business strategy advisor for Malaysian micro-businesses with access to real-time economic data and news.
 
@@ -125,9 +123,6 @@ Real-World Context:
 
     if holiday_context:
         prompt += f"\nMalaysia Public Holidays (Pulau Pinang):\n{holiday_context}\n"
-
-    if sales_context:
-        prompt += f"\n{sales_context}\n"
 
     prompt += """
 Your task is to generate 2-3 CUSTOM scenarios that can be SIMULATED with consumer agents making visit/purchase decisions.

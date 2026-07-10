@@ -214,21 +214,6 @@ export default function DashboardPage({ session }: Props) {
             {STATUS_LABELS[sim.status] || sim.status}
           </div>
 
-          {/* Sales Insights */}
-          <Link href="/sales" title="Sales Insights" style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            width: 32, height: 32, borderRadius: 6,
-            color: 'var(--gray-600)', textDecoration: 'none',
-            transition: 'background 0.15s, color 0.15s',
-          }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--gray-100)'; (e.currentTarget as HTMLElement).style.color = 'var(--accent)' }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--gray-600)' }}
-          >
-            <svg style={{ width: 18, height: 18 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-            </svg>
-          </Link>
-
           {/* Home */}
           <Link href="/" style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center',

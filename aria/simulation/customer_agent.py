@@ -100,15 +100,12 @@ class CustomerAgent(mesa.Agent):
         """
         peer_messages = self.get_peer_messages() if use_peer_influence else None
 
-        sales_context = scenario_context.get("sales_context", "") if isinstance(scenario_context, dict) else ""
-
         result = await self.llm_brain.make_decision_and_message(
             agent_profile=self.profile_text,
             scenario_context=scenario_context,
             business_context=business_context,
             peer_messages=peer_messages if peer_messages else None,
             income_level=self.income_level,
-            sales_context=sales_context,
         )
         
         # Update state

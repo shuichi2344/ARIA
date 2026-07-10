@@ -331,18 +331,6 @@ class ScenarioSuggestionAgent:
         try:
             print("→ Building LLM prompt with context")
 
-            # Fetch sales context to ground suggestions in real business history
-            sales_context = ""
-            profile_id = business_profile.get("id") or business_profile.get("profile_id")
-            if profile_id:
-                try:
-                    from aria.sales.sales_context import build_sales_context
-                    sales_context = await build_sales_context(profile_id)
-                    if sales_context:
-                        print(f"  → Sales context loaded ({len(sales_context)} chars)")
-                except Exception as _sc_err:
-                    print(f"  → Sales context unavailable: {_sc_err}")
-
             # Generate scenario suggestions with context
             prompt = prompts.scenario_suggestion_with_context(
                 business_profile=business_profile,
@@ -350,7 +338,6 @@ class ScenarioSuggestionAgent:
                 news_articles=context["news_articles"],
                 economic_indicators=context["economic_indicators"],
                 holiday_context=context.get("holiday_context", ""),
-                sales_context=sales_context,
             )
             
             print(f"  Prompt length: {len(prompt)} characters")

@@ -346,6 +346,8 @@ async def login(request: Request, body: UserLogin):
     except Exception as e:
         if "INVALID_CREDENTIALS" in str(e):
             raise HTTPException(status_code=401, detail="Incorrect email or password.")
+        if "EMAIL_NOT_CONFIRMED" in str(e):
+            raise HTTPException(status_code=403, detail="EMAIL_NOT_CONFIRMED")
         print(f"[ERROR] Login failed: {e}")
         raise HTTPException(status_code=500, detail="Login failed. Please try again.")
 
@@ -419,42 +421,6 @@ async def forgot_password(request: Request, body: ForgotPasswordRequest):
 
     # Always return success to prevent email enumeration
     return {"success": True, "message": "If an account with that email exists, a reset link has been sent."}
-
-
-class ResetPasswordRequest(BaseModel):
-    model_config = {"extra": "forbid"}
-    access_token: str = Field(
-        ..., min_length=1, max_length=2048,
-        description="JWT access_token extracted from the Supabase reset link URL fragment"
-    )
-    new_password: str = Field(..., min_length=6, max_length=128)
-
-
-@app.post("/api/auth/reset-password")
-@limiter.limit(AUTH_RATE_LIMIT)
-async def reset_password(request: Request, body: ResetPasswordRequest):
-    """
-    Set a new password using the access_token from the Supabase recovery email.
-
-    The Supabase reset link lands the user at:
-        /auth/reset-password#access_token=<jwt>&type=recovery
-    The frontend extracts the access_token from the URL fragment and sends
-    it here along with the new password.
-    """
-    is_valid, error_msg = validate_password_strength(body.new_password)
-    if not is_valid:
-        raise HTTPException(status_code=400, detail=error_msg)
-
-    try:
-        supabase_client = SupabaseClient()
-        await supabase_client.update_user_password(body.access_token, body.new_password)
-        return {"success": True, "message": "Password has been reset successfully. You can now log in."}
-    except Exception as e:
-        logger.error(f"Reset password error: {e}")
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid or expired reset link. Please request a new one.",
-        )
 
 
 @app.get("/api/auth/me", response_model=UserResponse)

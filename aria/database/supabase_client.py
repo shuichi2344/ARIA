@@ -126,6 +126,16 @@ class SupabaseClient:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, headers=self.headers) as resp:
                 if resp.status != 200:
+                    body = await resp.json()
+                    msg = (
+                        body.get("msg") or
+                        body.get("message") or
+                        body.get("error_description") or
+                        body.get("error") or
+                        ""
+                    ).lower()
+                    if "email not confirmed" in msg or "email_not_confirmed" in msg:
+                        raise Exception("EMAIL_NOT_CONFIRMED")
                     raise Exception("INVALID_CREDENTIALS")
 
                 body = await resp.json()
@@ -164,14 +174,26 @@ class SupabaseClient:
         Supabase always returns 200 to prevent email enumeration.
         The reset link in the email will contain an access_token the user
         must send to /api/auth/reset-password.
+
+        NOTE: redirect_to must be passed as a *query parameter*, not in the
+        JSON body.  The Supabase /auth/v1/recover endpoint ignores a
+        redirect_to key in the body.
         """
+        # redirect_to goes on the query string, not in the JSON body
+        params: Dict[str, str] = {}
+        if redirect_to:
+            params["redirect_to"] = redirect_to
+
         url = f"{self.base_url}/auth/v1/recover"
         payload: Dict[str, Any] = {"email": email.lower().strip()}
-        if redirect_to:
-            payload["redirect_to"] = redirect_to
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=self.headers) as resp:
+            async with session.post(
+                url,
+                json=payload,
+                params=params,
+                headers=self.headers,
+            ) as resp:
                 return resp.status == 200
 
     async def update_user_password(self, access_token: str, new_password: str) -> bool:

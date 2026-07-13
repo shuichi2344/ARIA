@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { X, ArrowRight, Loader2 } from 'lucide-react'
+import { X, ArrowRight, Loader2, Eye, EyeOff } from 'lucide-react'
 
 interface Props {
   defaultTab?: 'login' | 'register'
@@ -52,6 +52,49 @@ function AuthInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   )
 }
 
+function PasswordInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  const [focused, setFocused] = useState(false)
+  const [visible, setVisible] = useState(false)
+  return (
+    <div style={{ position: 'relative' }}>
+      <input
+        {...props}
+        type={visible ? 'text' : 'password'}
+        style={{
+          ...inputStyle,
+          paddingRight: '3rem',
+          borderColor: focused ? 'var(--accent)' : 'var(--gray-200)',
+          background: focused ? '#fff' : 'var(--gray-50)',
+          boxShadow: focused ? '0 0 0 4px color-mix(in srgb, var(--accent) 10%, transparent)' : 'none',
+          transform: focused ? 'translateY(-1px)' : 'none',
+          width: '100%',
+        }}
+        onFocus={e => { setFocused(true); props.onFocus?.(e) }}
+        onBlur={e => { setFocused(false); props.onBlur?.(e) }}
+      />
+      <button
+        type="button"
+        onClick={() => setVisible(v => !v)}
+        tabIndex={-1}
+        aria-label={visible ? 'Hide password' : 'Show password'}
+        style={{
+          position: 'absolute', right: '0.875rem', top: '50%',
+          transform: 'translateY(-50%)',
+          background: 'none', border: 'none', cursor: 'pointer',
+          color: 'var(--gray-400)', display: 'flex', alignItems: 'center',
+          padding: 0, transition: 'color 0.15s',
+        }}
+        onMouseEnter={e => (e.currentTarget.style.color = 'var(--gray-700)')}
+        onMouseLeave={e => (e.currentTarget.style.color = 'var(--gray-400)')}
+      >
+        {visible
+          ? <EyeOff style={{ width: 18, height: 18 }} />
+          : <Eye    style={{ width: 18, height: 18 }} />}
+      </button>
+    </div>
+  )
+}
+
 function validatePassword(password: string): string | null {
   if (password.length < 6) return 'Password must be at least 6 characters.'
   if (!/[A-Z]/.test(password)) return 'Password must include at least one uppercase letter.'
@@ -90,7 +133,14 @@ export default function AuthModal({ defaultTab = 'login', onClose, onSuccess }: 
         body: JSON.stringify({ email: loginEmail.trim(), password: loginPassword }),
       })
       const data = await res.json()
-      if (!res.ok) { setLoginError(data.detail || 'Login failed.'); return }
+      if (!res.ok) {
+        if (data.detail === 'EMAIL_NOT_CONFIRMED') {
+          setLoginError('Please confirm your email address before signing in. Check your inbox for a confirmation link.')
+          return
+        }
+        setLoginError(data.detail || 'Login failed.')
+        return
+      }
       if (!data.access_token) {
         setLoginError('Login succeeded but no session token was returned. Please try again.')
         return
@@ -251,8 +301,8 @@ export default function AuthModal({ defaultTab = 'login', onClose, onSuccess }: 
               />
             </FormField>
             <FormField label="Password">
-              <AuthInput
-                type="password" value={loginPassword}
+              <PasswordInput
+                value={loginPassword}
                 onChange={e => setLoginPassword(e.target.value)}
                 placeholder="••••••••" required autoComplete="current-password"
               />
@@ -324,8 +374,8 @@ export default function AuthModal({ defaultTab = 'login', onClose, onSuccess }: 
               />
             </FormField>
             <FormField label="Password">
-              <AuthInput
-                type="password" value={regPassword}
+              <PasswordInput
+                value={regPassword}
                 onChange={e => setRegPassword(e.target.value)}
                 placeholder="Min 6 chars, uppercase, number, special" required minLength={6} autoComplete="new-password"
               />
@@ -334,8 +384,8 @@ export default function AuthModal({ defaultTab = 'login', onClose, onSuccess }: 
               </span>
             </FormField>
             <FormField label="Confirm Password">
-              <AuthInput
-                type="password" value={regConfirm}
+              <PasswordInput
+                value={regConfirm}
                 onChange={e => setRegConfirm(e.target.value)}
                 placeholder="Repeat your password" required autoComplete="new-password"
               />

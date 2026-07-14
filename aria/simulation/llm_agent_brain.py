@@ -226,6 +226,80 @@ Profile:"""
         
         return result
     
+    async def check_peer_susceptibility(
+        self,
+        agent_profile: str,
+        scenario_desc: str,
+        peer_messages: List[str],
+        current_decision: str,
+        direction: str,
+    ) -> Dict:
+        """
+        Ask the LLM whether this agent would even pay attention to peer opinions,
+        given who they are and what the scenario is.
+
+        Replaces hardcoded PERSONALITY_GATE / GATE_PROBABILITY tables so the
+        decision is scenario-aware and personality-aware rather than a static prior.
+
+        Args:
+            agent_profile: The agent's rich profile text.
+            scenario_desc: Description of the scenario being simulated.
+            peer_messages: What peers are saying (1-3 messages).
+            current_decision: The agent's current decision ("visit" or "skip").
+            direction: "negative" (peers are unhappy) or "positive" (peers are happy).
+
+        Returns:
+            {"susceptible": bool, "reason": str}
+        """
+        peer_block = "\n".join(f'- "{m}"' for m in peer_messages[:3])
+
+        if direction == "negative":
+            prompt_question = (
+                "Your friends seem unhappy about this. "
+                "Given who you are, your lifestyle, and this specific situation — "
+                "would you actually pay attention to their complaints and reconsider going?"
+            )
+        else:
+            prompt_question = (
+                "Your friends seem to have enjoyed it despite the situation. "
+                "Given who you are, your lifestyle, and this specific situation — "
+                "would their positive experience make you reconsider skipping?"
+            )
+
+        prompt = f"""You are: {agent_profile}
+
+Scenario: {scenario_desc}
+Your current decision: {current_decision.upper()}
+
+What friends are saying:
+{peer_block}
+
+{prompt_question}
+
+Reply in EXACTLY this format (2 lines only):
+Susceptible: yes OR no
+Reason: [one short sentence — why you would or would not care about what your friends say here]"""
+
+        response = await self.client.generate(
+            prompt=prompt,
+            temperature=0.3,
+            max_tokens=80,
+        )
+        raw = _clean_response(response["response"])
+
+        susceptible = False
+        reason = ""
+        for line in raw.split("\n"):
+            line_stripped = line.strip()
+            line_lower = line_stripped.lower()
+            if line_lower.startswith("susceptible:"):
+                answer = line_lower.replace("susceptible:", "").strip()
+                susceptible = answer.startswith("y")
+            elif line_lower.startswith("reason:"):
+                reason = line_stripped[len("Reason:"):].strip().strip('"').strip("'")
+
+        return {"susceptible": susceptible, "reason": reason or "No specific reason given."}
+
     async def make_decision_and_message(
         self,
         agent_profile: str,

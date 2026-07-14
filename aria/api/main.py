@@ -1906,13 +1906,16 @@ async def _run_simulation_single(sim_id: str, run_number: int = 1) -> Dict[str, 
     print(f"  Phase 1 complete: {total_visits} visit, {len(agents)-total_visits-total_churned} skip, {total_churned} churn")
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # PHASE 2: Peer influence — hybrid (probability gate + LLM interaction)
-    # Step 1: Rule-based gate determines WHO is susceptible to peer influence
-    # Step 2: LLM decides HOW they respond (considering full scenario, not just price)
+    # PHASE 2: Peer influence — LLM-driven susceptibility gate
+    # Step 1: Flat budget gate skips 15% of agents to control LLM cost.
+    # Step 2: LLM susceptibility check decides WHO is open to peer influence,
+    #         based on their specific profile and the actual scenario context.
+    # Step 3: LLM decides HOW they respond (the full reconsider prompt).
+    # No hardcoded personality or income priors — the LLM reasons it out.
     # ═══════════════════════════════════════════════════════════════════════════
     is_price_scenario = scenario_type in ('price_change', 'pricing') or price_change != 0
     
-    print("\n── Phase 2: Peer Influence (Hybrid: Gate + LLM) ──")
+    print("\n── Phase 2: Peer Influence (LLM-driven susceptibility gate) ──")
     
     # Emit phase label to frontend
     await q.put({
@@ -1928,77 +1931,18 @@ async def _run_simulation_single(sim_id: str, run_number: int = 1) -> Dict[str, 
             return True
         return agent.income_level in B2B_SIZES
     
-    # Gate probability: determines who is open to reconsidering
-    # For PRICE scenarios: scale by income level / business size and price severity
-    # For NON-PRICE scenarios: scale by personality/lifestyle traits
-    severity = min(abs(price_change) / 0.15, 2.0) if price_change != 0 else 1.0
-    severity_factor = max(0.7, severity)
-    
-    if is_price_scenario:
-        # Income-based gate probabilities — flat 20% for all income levels
-        GATE_PROBABILITY = {
-            ("B40", "negative"): 0.20,
-            ("B40", "positive"): 0.20,
-            ("M40", "negative"): 0.20,
-            ("M40", "positive"): 0.20,
-            ("T20", "negative"): 0.20,
-            ("T20", "positive"): 0.20,
-        }
-    else:
-        # Personality-based gate probabilities for non-price scenarios
-        PERSONALITY_GATE = {
-            ("influencer", "negative"): 0.65,
-            ("influencer", "positive"): 0.60,
-            ("foodie", "negative"): 0.55,
-            ("foodie", "positive"): 0.55,
-            ("university student", "negative"): 0.60,
-            ("university student", "positive"): 0.55,
-            ("student", "negative"): 0.55,
-            ("student", "positive"): 0.50,
-            ("fitness enthusiast", "negative"): 0.40,
-            ("fitness enthusiast", "positive"): 0.45,
-            ("parent", "negative"): 0.45,
-            ("parent", "positive"): 0.40,
-            ("tourist", "negative"): 0.50,
-            ("tourist", "positive"): 0.55,
-            ("freelancer", "negative"): 0.45,
-            ("freelancer", "positive"): 0.40,
-            ("wfh employee", "negative"): 0.40,
-            ("wfh employee", "positive"): 0.45,
-            ("young professional", "negative"): 0.45,
-            ("young professional", "positive"): 0.45,
-            ("employee", "negative"): 0.35,
-            ("employee", "positive"): 0.35,
-            ("professional", "negative"): 0.30,
-            ("professional", "positive"): 0.35,
-            ("entrepreneur", "negative"): 0.25,
-            ("entrepreneur", "positive"): 0.30,
-            ("homemaker", "negative"): 0.50,
-            ("homemaker", "positive"): 0.45,
-            ("retiree", "negative"): 0.40,
-            ("retiree", "positive"): 0.30,
-            ("senior", "negative"): 0.35,
-            ("senior", "positive"): 0.25,
-            ("customer", "negative"): 0.35,
-            ("customer", "positive"): 0.35,
-        }
-    
-    # B2B gate probabilities — flat 30/20/10% by business size
-    B2B_GATE = {
-        ("Micro", "negative"): 0.30,
-        ("Micro", "positive"): 0.30,
-        ("Small", "negative"): 0.20,
-        ("Small", "positive"): 0.20,
-        ("Medium", "negative"): 0.10,
-        ("Medium", "positive"): 0.10,
-    }
-    
+    # ── Compute budget gate ──────────────────────────────────────────────────
+    # A flat low-probability roll to skip the LLM susceptibility check entirely
+    # for agents who are very unlikely to reconsider (cost control).
+    # Set to 0.0 to always ask the LLM (no budget gate).
+    BUDGET_GATE_PROB = 0.15  # 15% chance of being skipped without an LLM call
+
     def peer_pressure_multiplier(num_peers: int) -> float:
         if num_peers >= 3: return 1.3
         elif num_peers == 2: return 1.15
         return 1.0
-    
-    print(f"  {'Price severity' if is_price_scenario else 'Personality-based'} factor: {severity_factor:.2f}x (price_change={price_change*100:.0f}%)")
+
+    print(f"  LLM-driven susceptibility gate (budget gate={BUDGET_GATE_PROB:.0%}, price_change={price_change*100:.0f}%)")
     
     reconsider_count = 0
     agents_evaluated = 0
@@ -2029,13 +1973,6 @@ async def _run_simulation_single(sim_id: str, run_number: int = 1) -> Dict[str, 
             if not relevant_peers:
                 continue
             direction = "negative"
-            if _is_b2b_agent(mesa_agent):
-                base_prob = B2B_GATE.get((mesa_agent.income_level, "negative"), 0.20)
-            elif is_price_scenario:
-                base_prob = GATE_PROBABILITY.get((mesa_agent.income_level, "negative"), 0.25)
-            else:
-                ptype = getattr(mesa_agent, 'personality_type', 'customer')
-                base_prob = PERSONALITY_GATE.get((ptype, "negative"), 0.35)
             
         elif current_decision == "skip":
             relevant_peers = []
@@ -2048,27 +1985,20 @@ async def _run_simulation_single(sim_id: str, run_number: int = 1) -> Dict[str, 
             if not relevant_peers:
                 continue
             direction = "positive"
-            if _is_b2b_agent(mesa_agent):
-                base_prob = B2B_GATE.get((mesa_agent.income_level, "positive"), 0.15)
-            elif is_price_scenario:
-                base_prob = GATE_PROBABILITY.get((mesa_agent.income_level, "positive"), 0.25)
-            else:
-                ptype = getattr(mesa_agent, 'personality_type', 'customer')
-                base_prob = PERSONALITY_GATE.get((ptype, "positive"), 0.35)
         else:
             continue
         
         agents_evaluated += 1
         num_influencers = len(influencing_peer_ids)
-        gate_prob = min(0.75, base_prob * peer_pressure_multiplier(num_influencers))
-        
-        # GATE: Does this agent even consider their peers' opinions?
-        passes_gate = random.random() < gate_prob
-        
-        if not passes_gate:
+
+        # ── Budget gate: skip the LLM entirely for a small fraction of agents ──
+        # This is a flat compute-control gate, NOT a persona prior.
+        # It prevents calling the LLM for every single agent while still letting
+        # the LLM decide for the majority.
+        if random.random() < BUDGET_GATE_PROB:
             agent_label = f"{mesa_agent.income_level}" if is_price_scenario else f"{getattr(mesa_agent, 'personality_type', 'customer')}"
             print(f"  Agent {mesa_agent.unique_id} ({agent_label}, {current_decision}): "
-                  f"{num_influencers} {direction} peer(s), gate={gate_prob:.0%} → ignored peers")
+                  f"budget gate skip (no LLM call)")
             await q.put({
                 "type": "peer_evaluation",
                 "data": {
@@ -2078,12 +2008,50 @@ async def _run_simulation_single(sim_id: str, run_number: int = 1) -> Dict[str, 
                     "current_decision": current_decision,
                     "direction": direction,
                     "num_peers": num_influencers,
-                    "probability": round(gate_prob * 100),
+                    "probability": round(BUDGET_GATE_PROB * 100),
                     "flipped": False,
                 }
             })
             continue
-        
+
+        # ── LLM susceptibility check ────────────────────────────────────────
+        # Ask the LLM whether this specific agent, in this specific scenario,
+        # would pay attention to their peers — no hardcoded persona priors.
+        peer_messages_for_gate = [p.reasoning for p in relevant_peers[:3]]
+        susceptibility = await llm_brain.check_peer_susceptibility(
+            agent_profile=mesa_agent.profile_text,
+            scenario_desc=scenario_message,
+            peer_messages=peer_messages_for_gate,
+            current_decision=current_decision,
+            direction=direction,
+        )
+        passes_gate = susceptibility["susceptible"]
+        gate_reason = susceptibility["reason"]
+        # Use num_influencers as a soft boost: if 3+ peers agree, bump to yes
+        if not passes_gate and num_influencers >= 3:
+            passes_gate = True
+            gate_reason = f"Strong peer consensus ({num_influencers} peers) overrode initial reluctance."
+        gate_prob = 1.0 if passes_gate else 0.0  # used only for logging
+
+        if not passes_gate:
+            agent_label = f"{mesa_agent.income_level}" if is_price_scenario else f"{getattr(mesa_agent, 'personality_type', 'customer')}"
+            print(f"  Agent {mesa_agent.unique_id} ({agent_label}, {current_decision}): "
+                  f"{num_influencers} {direction} peer(s), LLM: not susceptible — '{gate_reason}'")
+            await q.put({
+                "type": "peer_evaluation",
+                "data": {
+                    "agent_id": mesa_agent.unique_id,
+                    "income_level": mesa_agent.income_level,
+                    "personality_type": getattr(mesa_agent, 'personality_type', 'customer'),
+                    "current_decision": current_decision,
+                    "direction": direction,
+                    "num_peers": num_influencers,
+                    "probability": 0,
+                    "flipped": False,
+                }
+            })
+            continue
+
         # PASSED GATE — ask LLM how this agent responds to their peers
         agents_sent_to_llm += 1
         peer_messages = [p.reasoning for p in relevant_peers[:3]]
@@ -2168,7 +2136,7 @@ Message: [15-20 word message explaining your choice after hearing from friends]"
         
         agent_label = f"{mesa_agent.income_level}" if is_price_scenario else f"{getattr(mesa_agent, 'personality_type', 'customer')}"
         print(f"  Agent {mesa_agent.unique_id} ({agent_label}, {current_decision}): "
-              f"{num_influencers} {direction} peer(s), gate={gate_prob:.0%} PASSED → LLM says {new_decision} {'(CHANGED!)' if flipped else '(held)'}")
+              f"{num_influencers} {direction} peer(s), LLM susceptible → reconsider says {new_decision} {'(CHANGED!)' if flipped else '(held)'}")
         
         # Emit evaluation event
         await q.put({

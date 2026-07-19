@@ -91,7 +91,6 @@ class SyntheticPopulationGenerator:
                     age_marginals=age_marginals,
                     income_marginals=income_marginals,
                     demographics=demographics,
-                    business_profile=business_profile,
                     count=count
                 )
                 result["method_used"] = "ipf"
@@ -103,7 +102,6 @@ class SyntheticPopulationGenerator:
                     age_marginals=age_marginals,
                     income_marginals=income_marginals,
                     demographics=demographics,
-                    business_profile=business_profile,
                     count=count
                 )
                 result["method_used"] = "fallback"
@@ -115,7 +113,6 @@ class SyntheticPopulationGenerator:
                 age_marginals=age_marginals,
                 income_marginals=income_marginals,
                 demographics=demographics,
-                business_profile=business_profile,
                 count=count
             )
             result["method_used"] = "fallback"
@@ -189,7 +186,6 @@ class SyntheticPopulationGenerator:
         age_marginals: Dict[str, float],
         income_marginals: Dict[str, float],
         demographics: Dict[str, Any],
-        business_profile: Dict[str, Any],
         count: int
     ) -> Dict[str, Any]:
         """Generate population using IPF."""
@@ -217,8 +213,7 @@ class SyntheticPopulationGenerator:
         # Assign detailed attributes to agents
         agents = self._assign_agent_attributes(
             agent_samples=agent_samples,
-            demographics=demographics,
-            business_profile=business_profile
+            demographics=demographics
         )
         
         logger.info(f"Generated {len(agents)} agents using IPF")
@@ -238,7 +233,6 @@ class SyntheticPopulationGenerator:
         age_marginals: Dict[str, float],
         income_marginals: Dict[str, float],
         demographics: Dict[str, Any],
-        business_profile: Dict[str, Any],
         count: int
     ) -> Dict[str, Any]:
         """Generate population using simple independent sampling (fallback)."""
@@ -271,8 +265,7 @@ class SyntheticPopulationGenerator:
         # Assign detailed attributes
         agents = self._assign_agent_attributes(
             agent_samples=agent_samples,
-            demographics=demographics,
-            business_profile=business_profile
+            demographics=demographics
         )
         
         logger.info(f"Generated {len(agents)} agents using fallback method")
@@ -288,8 +281,7 @@ class SyntheticPopulationGenerator:
     def _assign_agent_attributes(
         self,
         agent_samples: List[tuple[str, str]],
-        demographics: Dict[str, Any],
-        business_profile: Dict[str, Any]
+        demographics: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
         """
         Assign detailed attributes to sampled agents.
@@ -297,7 +289,6 @@ class SyntheticPopulationGenerator:
         Args:
             agent_samples: List of (age_group, income_level) tuples
             demographics: Demographics data
-            business_profile: Business profile data
 
         Returns:
             List of complete agent dictionaries
@@ -307,8 +298,7 @@ class SyntheticPopulationGenerator:
                 agent_index=idx,
                 age_group=age_group,
                 income_level=income_level,
-                demographics=demographics,
-                business_profile=business_profile
+                demographics=demographics
             )
             for idx, (age_group, income_level) in enumerate(agent_samples)
         ]
@@ -318,86 +308,26 @@ class SyntheticPopulationGenerator:
         agent_index: int,
         age_group: str,
         income_level: str,
-        demographics: Dict[str, Any],
-        business_profile: Dict[str, Any]
+        demographics: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Create a single agent with complete attributes.
+        Create a single agent with demographic attributes.
 
         Args:
             agent_index: Zero-based index used to generate a simple agent label
             age_group: Age group (e.g., "20-29")
             income_level: Income level (B40/M40/T20)
             demographics: Demographics data
-            business_profile: Business profile data
 
         Returns:
-            Complete agent dictionary
+            Agent dictionary with income_level, age_range, and monthly_income_rm
         """
-        # Get income data
         income_data = demographics.get("income_distribution", {}).get(income_level, {})
         median_income = income_data.get("median_income_rm", 5000)
-        
-        # Spending patterns by income level
-        spending_patterns = {
-            "B40": {
-                "frequency": "weekly",
-                "avg_spend_rm": min(15, median_income * 0.005),  # 0.5% of monthly income
-                "price_sensitivity": "high"
-            },
-            "M40": {
-                "frequency": "weekly",
-                "avg_spend_rm": min(30, median_income * 0.005),
-                "price_sensitivity": "medium"
-            },
-            "T20": {
-                "frequency": "bi-weekly",
-                "avg_spend_rm": min(60, median_income * 0.004),
-                "price_sensitivity": "low"
-            }
-        }
-        
-        # Loyalty traits by income level
-        loyalty_traits = {
-            "B40": {
-                "repeat_customer": True,
-                "brand_loyal": False,
-                "influenced_by_peers": True
-            },
-            "M40": {
-                "repeat_customer": True,
-                "brand_loyal": True,
-                "influenced_by_peers": True
-            },
-            "T20": {
-                "repeat_customer": True,
-                "brand_loyal": True,
-                "influenced_by_peers": False
-            }
-        }
-        
-        # Base susceptibility by income level (price sensitivity)
-        base_susceptibility = {
-            "B40": 7.0,  # More susceptible to price changes
-            "M40": 5.0,  # Moderate susceptibility
-            "T20": 3.0   # Less susceptible
-        }
-        
-        # Payment preferences from demographics
-        payment_prefs = demographics.get("payment_preferences", {})
-        
+
         return {
             "persona_name": f"Agent {agent_index + 1}",
             "income_level": income_level,
             "age_range": age_group,
             "monthly_income_rm": median_income,
-            "spending_pattern": spending_patterns[income_level],
-            "loyalty_traits": loyalty_traits[income_level],
-            "payment_preferences": {
-                "cash": payment_prefs.get("cash", {}).get("percentage", 45.0),
-                "card": payment_prefs.get("card", {}).get("percentage", 30.0),
-                "ewallet": payment_prefs.get("ewallet", {}).get("percentage", 20.0),
-                "online_banking": payment_prefs.get("online_banking", {}).get("percentage", 5.0)
-            },
-            "base_susceptibility": base_susceptibility[income_level]
         }

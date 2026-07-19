@@ -1135,9 +1135,6 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
                 "income_level": base_agent['income_level'],
                 "age_range": base_agent['age_range'],
                 "monthly_income_rm": base_agent.get('monthly_income_rm', 5000),
-                "spending_pattern": base_agent.get('spending_pattern', {}),
-                "loyalty_traits": base_agent.get('loyalty_traits', {}),
-                "payment_preferences": base_agent.get('payment_preferences', {}),
                 
                 # Personality from LLM (narrative-driven, rich context)
                 "profile_text": profile_text,
@@ -1772,9 +1769,6 @@ async def _run_simulation_single(sim_id: str, run_number: int = 1) -> Dict[str, 
             archetype={
                 'income_level': agent_dict['income_level'],
                 'age_range': agent_dict['age_range'],
-                'spending_pattern': agent_dict.get('spending_pattern', {}),
-                'loyalty_traits': agent_dict.get('loyalty_traits', {}),
-                'base_susceptibility': agent_dict.get('base_susceptibility', 5.0),
             },
             llm_brain=llm_brain,
         )
@@ -2689,13 +2683,6 @@ def _generate_b2b_agents(
             'income_level': size,  # repurposed: business size
             'age_range': segment,  # repurposed: business segment
             'monthly_income_rm': monthly_spend,
-            'spending_pattern': {
-                'avg_spend_rm': avg_transaction,
-                'frequency': purchase_frequency,
-            },
-            'loyalty_traits': {},
-            'payment_preferences': {},
-            'base_susceptibility': 5.0,
         })
     
     return agents

@@ -101,6 +101,13 @@ class SupabaseClient:
                 user = body.get("user") or body
                 session_data = body.get("session") or {}
 
+                # Supabase security behaviour: when a confirmed email is re-registered,
+                # it returns HTTP 200 with an empty "identities" list instead of an error
+                # (to prevent email enumeration). We detect this and raise EMAIL_TAKEN.
+                identities = user.get("identities")
+                if identities is not None and len(identities) == 0:
+                    raise Exception("EMAIL_TAKEN")
+
                 return {
                     "id":            user.get("id", ""),
                     "email":         user.get("email", email),

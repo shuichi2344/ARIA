@@ -127,7 +127,7 @@ Demographics:
 {personality_guidance}
 
 Write a 3-5 sentence profile covering:
-1. Who they are (lifestyle/occupation) — clearly state their role (e.g., "a university student", "a freelance designer", "a working professional", "a retiree")
+1. Who they are (lifestyle/occupation) — clearly state their role (e.g., "a university student", "a freelance designer", "a working professional", "a retiree", etc)
 2. Their relationship with this business (how often they visit, why they come)
 3. What they value most (price? quality? convenience? ambiance? speed?)
 4. Their spending habits based on their income level (careful with money? splurges? compares prices?)

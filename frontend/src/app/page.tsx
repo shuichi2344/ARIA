@@ -83,7 +83,7 @@ export default function LandingPage() {
         if (profile?.id) {
           localStorage.setItem('aria_profile',    JSON.stringify(profile))
           localStorage.setItem('aria_profile_id', profile.id)
-          router.push('/dashboard')
+          router.push('/dashboard?login=1')
           return
         }
       }

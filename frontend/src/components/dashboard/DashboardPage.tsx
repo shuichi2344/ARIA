@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useEffect, useState, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import ProfileWidget from '@/components/auth/ProfileWidget'
 import ChatPanel from './ChatPanel'
@@ -26,14 +26,26 @@ const STATUS_DOT: Record<string, string> = {
 
 export default function DashboardPage({ session }: Props) {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { logout } = useSession()
   const [profile, setProfile] = useState<BusinessProfile | null>(null)
+  const [showLoginToast, setShowLoginToast] = useState(false)
 
   // Apply saved theme
   useEffect(() => {
     const saved = localStorage.getItem('aria-theme') || 'burgundy'
     document.body.dataset.theme = saved
   }, [])
+
+  // Show login success toast if redirected from login
+  useEffect(() => {
+    if (searchParams.get('login') === '1') {
+      setShowLoginToast(true)
+      window.history.replaceState({}, '', '/dashboard')
+      const timer = setTimeout(() => setShowLoginToast(false), 3000)
+      return () => clearTimeout(timer)
+    }
+  }, [searchParams])
 
   // Load profile from localStorage (same as dashboard.js)
   useEffect(() => {
@@ -96,6 +108,31 @@ export default function DashboardPage({ session }: Props) {
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+      {/* Login success toast */}
+      {showLoginToast && (
+        <div style={{
+          position: 'fixed',
+          top: '1.25rem',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 9999,
+          background: '#166534',
+          color: '#fff',
+          padding: '0.65rem 1.25rem',
+          borderRadius: '8px',
+          fontSize: '0.9rem',
+          fontWeight: 600,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.5rem',
+          animation: 'fadeIn 0.2s ease',
+          pointerEvents: 'none',
+        }}>
+          ✓ Successfully logged in!
+        </div>
+      )}
 
       {/* History sidebar */}
       <HistorySidebar

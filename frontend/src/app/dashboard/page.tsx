@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, Suspense } from 'react'
+import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useSession } from '@/context/SessionContext'
 import DashboardPage from '@/components/dashboard/DashboardPage'
@@ -16,9 +16,5 @@ export default function Dashboard() {
   }, [session, router])
 
   if (!session) return null
-  return (
-    <Suspense fallback={null}>
-      <DashboardPage session={session} />
-    </Suspense>
-  )
+  return <DashboardPage session={session} />
 }

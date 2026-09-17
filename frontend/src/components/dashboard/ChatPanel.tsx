@@ -640,7 +640,21 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
       })
       
       console.log('[ChatPanel] Response status:', res.status)
-      
+
+      // Handle irrelevant / off-topic input (422)
+      if (res.status === 422) {
+        const errData = await res.json().catch(() => ({}))
+        const detail = errData?.detail || {}
+        const message = detail?.message || "Your question doesn't seem related to business simulation."
+        const suggestion = detail?.suggestion || "Try asking about pricing, competitors, promotions, or any decision that affects your customers."
+        setMessages(p => [
+          ...p.filter(m => m.role !== 'typing'),
+          { id: generateMsgId(), role: 'aria', text: `⚠️ ${message}`, hint: suggestion },
+        ])
+        persistMessage('aria', message)
+        return
+      }
+
       if (!res.ok) throw new Error('Suggestion failed')
       const data = await res.json()
       
@@ -704,7 +718,20 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
         signal: controller.signal,
       })
 
-      if (!res.ok) throw new Error('Suggestion failed')
+      if (!res.ok && res.status !== 422) throw new Error('Suggestion failed')
+
+      if (res.status === 422) {
+        const errData = await res.json().catch(() => ({}))
+        const detail = errData?.detail || {}
+        const message = detail?.message || "Your question doesn't seem related to business simulation."
+        const suggestion = detail?.suggestion || "Try asking about pricing, competitors, promotions, or any decision that affects your customers."
+        setMessages(p => [
+          ...p.filter(m => m.role !== 'typing'),
+          { id: generateMsgId(), role: 'aria', text: `⚠️ ${message}`, hint: suggestion },
+        ])
+        return
+      }
+
       const data = await res.json()
 
       if (!data.scenarios || data.scenarios.length === 0) {

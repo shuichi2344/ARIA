@@ -6,6 +6,49 @@ All templates include Malaysian cultural context.
 from typing import Dict, Any, List, Optional
 
 
+def scenario_relevance_check(
+    business_profile: Dict[str, Any],
+    user_question: str
+) -> str:
+    """Generate a prompt to quickly check if the user's input is relevant to business simulation."""
+    business_type = business_profile.get("business_type", "business")
+    business_name = business_profile.get("business_name", "this business")
+
+    return f"""You are a strict relevance classifier for a business simulation platform called ARIA.
+
+ARIA helps Malaysian micro-business owners simulate "what-if" scenarios (e.g. price changes, new competitors, promotions, economic shifts) to predict customer behaviour.
+
+Business context:
+- Name: {business_name}
+- Type: {business_type}
+
+User input: "{user_question}"
+
+Decide if the user's input is relevant to business simulation for the above business.
+
+RELEVANT inputs include:
+- Questions about business strategy, pricing, competition, promotions, staff, location, demand, costs, economic conditions, customer behaviour, or any business decision that affects customers.
+- Questions about external factors (fuel prices, inflation, public holidays, competitor openings, new regulations) that could affect the business.
+- General business concerns even if vaguely worded (e.g. "what if sales drop?", "should I expand?").
+
+IRRELEVANT inputs include:
+- Off-topic conversations unrelated to business (e.g. greetings like "hello", "how are you", unrelated topics like "what is the capital of France", jokes, personal questions, random text, gibberish).
+
+Respond ONLY with a JSON object in this exact format:
+{{
+  "is_relevant": true,
+  "reason": "one sentence explanation"
+}}
+
+or
+
+{{
+  "is_relevant": false,
+  "reason": "one sentence explanation of why it is off-topic",
+  "suggestion": "a short friendly hint on what kind of question to ask instead"
+}}"""
+
+
 def business_profile_synthesis(
     questionnaire_data: Optional[Dict[str, Any]],
     manual_data: Optional[Dict[str, Any]]

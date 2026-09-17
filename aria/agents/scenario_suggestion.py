@@ -262,6 +262,40 @@ class ScenarioSuggestionAgent:
         
         return "\n".join(summary_parts) if summary_parts else "No additional context available"
     
+    async def validate_relevance(
+        self,
+        business_profile: Dict[str, Any],
+        user_question: str,
+    ) -> Dict[str, Any]:
+        """
+        Quick LLM check: is the user's question relevant to business simulation?
+
+        Returns a dict with:
+            - is_relevant (bool)
+            - reason (str)
+            - suggestion (str, only when is_relevant is False)
+        """
+        prompt = prompts.scenario_relevance_check(
+            business_profile=business_profile,
+            user_question=user_question,
+        )
+        try:
+            response = await self.llm_client.generate(
+                prompt=prompt,
+                temperature=0.0,  # deterministic for classification
+                max_tokens=200,
+            )
+            result = parse_json_response(response["response"])
+            return {
+                "is_relevant": bool(result.get("is_relevant", True)),
+                "reason": result.get("reason", ""),
+                "suggestion": result.get("suggestion", ""),
+            }
+        except Exception as e:
+            logger.warning(f"Relevance check failed (defaulting to relevant): {e}")
+            # Fail open — if the check itself errors, let the request through
+            return {"is_relevant": True, "reason": "check failed", "suggestion": ""}
+
     async def analyze_question(
         self,
         business_profile: Dict[str, Any],
@@ -295,7 +329,23 @@ class ScenarioSuggestionAgent:
         print(f"Question: '{user_question}'")
         print(f"Real-world context: {'ENABLED' if use_external_context else 'DISABLED'}")
         print("=" * 60)
-        
+
+        # STEP 0: Relevance check — reject off-topic input before doing any real work
+        print("\nSTEP 0: RELEVANCE CHECK")
+        print("=" * 60)
+        relevance = await self.validate_relevance(business_profile, user_question)
+        if not relevance["is_relevant"]:
+            print(f"✗ Input rejected as off-topic: {relevance['reason']}")
+            return {
+                "is_relevant": False,
+                "analysis": relevance["reason"],
+                "recommended_action": relevance.get("suggestion", ""),
+                "scenarios": [],
+                "context": {},
+            }
+        print(f"✓ Input is relevant: {relevance['reason']}")
+        print("=" * 60)
+
         # STEP 1: Gather real-world context (only if user opted in)
         if use_external_context:
             context = await self.gather_context(user_question, business_profile)

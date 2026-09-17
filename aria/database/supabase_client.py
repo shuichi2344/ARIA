@@ -540,9 +540,7 @@ class SupabaseClient:
         data = {
             "scenario_id": scenario_id,
             "status": status,
-            "current_week": 1,
             "agent_count": agent_count,
-            "progress_percentage": 100.0,
             "started_at": started_at or now,
             "completed_at": now,
             "monte_carlo_enabled": monte_carlo_enabled,

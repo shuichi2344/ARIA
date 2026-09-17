@@ -830,6 +830,7 @@ class SimulationStartRequest(BaseModel):
 async def suggest_scenarios(request: Request, body: ScenarioSuggestRequest):
     """
     Analyse the user's question and return suggested simulation scenarios.
+    Returns 422 with a user-friendly message if the question is off-topic.
     """
     try:
         agent = ScenarioSuggestionAgent()
@@ -839,10 +840,23 @@ async def suggest_scenarios(request: Request, body: ScenarioSuggestRequest):
             user_question=body.user_question,
             use_external_context=body.use_external_context,
         )
-        
+
+        # If the LLM flagged the input as irrelevant, surface it as a 422
+        if result.get("is_relevant") is False:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "IRRELEVANT_SCENARIO",
+                    "message": result.get("analysis", "Your question doesn't seem related to business simulation."),
+                    "suggestion": result.get("recommended_action", "Try asking about pricing, competitors, promotions, or any business decision that affects your customers."),
+                },
+            )
+
         logger.info(f"Scenario analysis complete - {len(result.get('scenarios', []))} scenarios generated")
-        
+
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Scenario analysis failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

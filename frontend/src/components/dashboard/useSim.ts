@@ -109,6 +109,11 @@ export function useSim(sessionId: string, profileId?: string) {
   const [monteCarloState, setMonteCarloState] = useState<MonteCarloState | null>(null)
   const monteCarloRef = useRef<MonteCarloState | null>(null)
 
+  // Plain-English loading message for the simplified loading screen
+  const [loadingMessage, setLoadingMessage] = useState<string>('Starting simulation…')
+  // Tracks when the sim started (for ETA estimation)
+  const simStartTimeRef = useRef<number | null>(null)
+
   // In-session completed simulations — drives the tab bar
   const [completedSims, setCompletedSims] = useState<CompletedSim[]>([])
   const [activeTabId,   setActiveTabId]   = useState<string | null>(null)
@@ -211,6 +216,8 @@ export function useSim(sessionId: string, profileId?: string) {
     scenarioNameRef.current = scenario.scenario_name
     scenarioTypeRef.current = scenario.scenario_type
     addFeed('system', `Starting simulation: "${scenario.scenario_name}" with ${agentCount} agents…`)
+    setLoadingMessage('Setting up your simulation…')
+    simStartTimeRef.current = Date.now()
 
     try {
       const res = await fetch(`${API_BASE}/api/simulation/start`, {
@@ -260,9 +267,11 @@ export function useSim(sessionId: string, profileId?: string) {
           agentsRef.current = next
           return next
         })
+        setLoadingMessage('Building customer personalities…')
       })
       es.addEventListener('profile_generation_complete', () => {
         addFeed('system', `✅ All agent personalities generated. Starting simulation...`)
+        setLoadingMessage('All customers ready — starting decisions…')
       })
       es.addEventListener('agent_decision', e => {
         const d = JSON.parse((e as MessageEvent).data)
@@ -271,11 +280,13 @@ export function useSim(sessionId: string, profileId?: string) {
                    : d.decision === 'churn' ? 'churned 🔴' : 'skipped 🟡'
         addFeed(d.decision as FeedItem['type'],
           `<strong>Customer ${d.agent_id}</strong> ${verb}<span class="reasoning">${esc(d.reasoning || '')}</span>`, d.agent_id)
+        setLoadingMessage('Customers are making decisions…')
       })
       es.addEventListener('peer_influence', e => {
         const d = JSON.parse((e as MessageEvent).data) as InfluenceEdge
         setInfluences(prev => { const next = [...prev, d]; influencesRef.current = next; return next })
         addFeed('system', `🗣️ <strong>Customer ${d.from_agent_id}</strong> influenced <strong>Customer ${d.to_agent_id}</strong> via word-of-mouth`, d.to_agent_id)
+        setLoadingMessage('Customers are talking to each other…')
       })
       es.addEventListener('peer_evaluation', e => {
         const d = JSON.parse((e as MessageEvent).data) as {
@@ -317,6 +328,7 @@ export function useSim(sessionId: string, profileId?: string) {
         setMonteCarloState(mcState)
         monteCarloRef.current = mcState
         addFeed('system', `🔁 <strong>Running multiple times for accuracy</strong> — running this scenario ${d.min_runs}-${d.max_runs} times to make sure results are reliable`)
+        setLoadingMessage(`Running simulation ${d.min_runs}–${d.max_runs} times for reliable results…`)
       })
 
       es.addEventListener('monte_carlo_run_start', e => {
@@ -327,6 +339,7 @@ export function useSim(sessionId: string, profileId?: string) {
           return next
         })
         addFeed('system', `<span style="font-weight:700;color:var(--accent)">━━━ Run ${d.run_number} of ${d.max_runs} ━━━</span>`)
+        setLoadingMessage(`Running simulation ${d.run_number} of ${d.max_runs}…`)
       })
 
       es.addEventListener('monte_carlo_progress', e => {
@@ -359,6 +372,10 @@ export function useSim(sessionId: string, profileId?: string) {
         addFeed('system', d.converged
           ? `✅ <strong>Results are reliable</strong> — got consistent outcomes after ${d.total_runs} runs`
           : `⚠️ <strong>Results may vary</strong> — completed ${d.total_runs} runs but outcomes weren't fully consistent`
+        )
+        setLoadingMessage(d.converged
+          ? `All ${d.total_runs} runs complete — results are consistent`
+          : `All ${d.total_runs} runs complete — wrapping up…`
         )
       })
 
@@ -503,6 +520,8 @@ export function useSim(sessionId: string, profileId?: string) {
     metricsRef.current = null
     scenarioNameRef.current = ''
     scenarioTypeRef.current = ''
+    setLoadingMessage('Starting simulation…')
+    simStartTimeRef.current = null
   }, [])
 
   // Resume viewing the live/current simulation (after viewing history)
@@ -535,6 +554,8 @@ export function useSim(sessionId: string, profileId?: string) {
     restoredReport, restoredDescription, isRestoredFromHistory,
     completedSims, activeTabId, setActiveTabId,
     monteCarloState,
+    loadingMessage,
+    simStartTime: simStartTimeRef,
   }
 }
 

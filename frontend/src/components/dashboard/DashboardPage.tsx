@@ -46,6 +46,40 @@ export default function DashboardPage({ session }: Props) {
   const sim = useSim(session.id, profile?.id)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [highlightedAgentId, setHighlightedAgentId] = useState<number | null>(null)
+  // Report from the most recently completed live simulation — shown in the right panel
+  const [completedReport, setCompletedReport] = useState<SimReport | null>(null)
+  const [completedDescription, setCompletedDescription] = useState<string>('')
+  // Controls whether the "thought process" (agent graph + feed) is visible over the loading screen
+  const [showThoughtProcess, setShowThoughtProcess] = useState(false)
+
+  // Capture report when a live simulation finishes
+  useEffect(() => {
+    if (sim.status === 'done' && !sim.isRestoredFromHistory) {
+      // Pull the report from the last completed sim snapshot
+      const last = sim.completedSims[sim.completedSims.length - 1]
+      if (last?.report) {
+        const r = last.report
+        setCompletedReport({
+          risk_level:          r.risk_level || 'Unknown',
+          churn_rate:          r.churn_rate ?? 0,
+          visit_rate:          r.visit_rate ?? 0,
+          estimated_revenue:   r.estimated_revenue ?? 0,
+          total_agents:        r.total_agents ?? 0,
+          archetype_breakdown: r.archetype_breakdown || {},
+          recommendations:     r.recommendations || [],
+          analysis:            r.analysis || '',
+          key_reasons:         r.key_reasons || [],
+        })
+        setCompletedDescription(last.scenarioName || '')
+      }
+    }
+    // Clear when a new sim starts or state resets
+    if (sim.status === 'idle' || sim.status === 'running') {
+      setCompletedReport(null)
+      setCompletedDescription('')
+      if (sim.status === 'running') setShowThoughtProcess(false)
+    }
+  }, [sim.status, sim.completedSims, sim.isRestoredFromHistory])
 
   function handleLogout() {
     logout()
@@ -88,11 +122,24 @@ export default function DashboardPage({ session }: Props) {
     ])
   }
 
-  // Progress based on how many agents have made decisions
+  // Progress — accounts for Monte Carlo multi-run structure
   const decidedCount = sim.agents.filter(a => a.last_decision !== null).length
-  const progressPct = sim.agents.length > 0
-    ? Math.round((decidedCount / sim.agents.length) * 100)
-    : 0
+  const mc = sim.monteCarloState
+  const progressPct = (() => {
+    if (mc && mc.max_runs > 0) {
+      // Each run is one equal slice. Within the current run, agent decisions fill the slice.
+      const completedRuns = Math.max(0, mc.current_run - 1)  // runs fully finished
+      const runSlice = 100 / mc.max_runs
+      const withinRunPct = sim.agents.length > 0
+        ? (decidedCount / sim.agents.length) * runSlice
+        : 0
+      return Math.min(99, Math.round(completedRuns * runSlice + withinRunPct))
+    }
+    // No Monte Carlo — straight agent-decision progress
+    return sim.agents.length > 0
+      ? Math.round((decidedCount / sim.agents.length) * 100)
+      : 0
+  })()
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -298,6 +345,13 @@ export default function DashboardPage({ session }: Props) {
             // For restored history items shown in the summary panel
             const showRestoredSummary = sim.isRestoredFromHistory && sim.restoredReport && sim.completedSims.length === 0
 
+            // Also show the full report panel when a live sim has just completed
+            const justCompletedSim = !sim.isRestoredFromHistory && sim.status === 'done' && completedReport
+            const showReportPanel = showRestoredSummary || justCompletedSim
+
+            // Show simplified loading screen while sim is running (unless user opened thought process)
+            const isRunningLive = isLive && (sim.status === 'running' || sim.status === 'paused')
+
             return (
             <div style={{
               flex: 1, display: 'flex', flexDirection: 'column',
@@ -363,7 +417,7 @@ export default function DashboardPage({ session }: Props) {
                     {displayName || '—'}
                   </span>
                   {/* Monte Carlo badge — shows live run progress and convergence */}
-                  {sim.monteCarloState && !sim.isRestoredFromHistory && (
+                  {sim.monteCarloState && !sim.isRestoredFromHistory && !isRunningLive && (
                     <MonteCarloBadge mc={sim.monteCarloState} />
                   )}
                 </div>
@@ -379,47 +433,100 @@ export default function DashboardPage({ session }: Props) {
                 )}
               </div>
 
-              {/* Progress bar — only for live tab */}
-              {isLive && (
-                <div style={{ height: 6, background: 'var(--gray-200)', borderRadius: 999, overflow: 'hidden', flexShrink: 0 }}>
-                  <div style={{
-                    height: '100%',
-                    background: 'linear-gradient(90deg, var(--accent), var(--accent-light))',
-                    borderRadius: 999,
-                    width: `${progressPct}%`,
-                    transition: 'width 0.5s ease',
-                  }} />
+              {/* Loading screen layer — shown while sim is running, hidden when user peeks at thought process */}
+              {isRunningLive && !showThoughtProcess && (
+                <SimLoadingScreen
+                  scenarioName={displayName}
+                  message={sim.loadingMessage}
+                  progressPct={progressPct}
+                  agentCount={sim.agents.length}
+                  decidedCount={decidedCount}
+                  monteCarloState={sim.monteCarloState}
+                  simStartTime={sim.simStartTime.current}
+                  isPaused={sim.isPaused}
+                  onShowThoughtProcess={() => setShowThoughtProcess(true)}
+                />
+              )}
+
+              {/* Thought-process toggle strip — shown when user has peeked inside */}
+              {isRunningLive && showThoughtProcess && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '0.45rem 0.75rem',
+                  background: 'var(--gray-100)', borderRadius: 8,
+                  border: '1px solid var(--gray-200)', flexShrink: 0,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.78rem', color: 'var(--gray-600)' }}>
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#22c55e', display: 'inline-block', animation: 'pulse-dot 1.2s infinite' }} />
+                    <span style={{ fontWeight: 600 }}>{sim.loadingMessage}</span>
+                    <span style={{ color: 'var(--gray-400)' }}>· {progressPct}%</span>
+                  </div>
+                  <button
+                    onClick={() => setShowThoughtProcess(false)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '0.35rem',
+                      padding: '0.25rem 0.65rem', borderRadius: 6, border: '1.5px solid var(--gray-300)',
+                      background: 'white', fontSize: '0.75rem', fontWeight: 600,
+                      color: 'var(--gray-700)', cursor: 'pointer', fontFamily: 'var(--font-family)',
+                    }}
+                  >
+                    <svg style={{ width: 13, height: 13 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>
+                    </svg>
+                    Hide thought process
+                  </button>
                 </div>
               )}
 
-              {/* Metrics */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '0.6rem', flexShrink: 0 }}>
-                <MetricCard label="Total visits" value={displayMetrics?.total_visits ?? '—'} />
-                <MetricCard label="Revenue (RM)" value={displayMetrics ? displayMetrics.total_revenue.toFixed(0) : '—'} tooltip="Estimated from your business price range (or income-based if not set), adjusted by the scenario's price change. Each visiting customer spends a random amount within your price range per visit." />
-                <MetricCard label="Active customers" value={displayMetrics?.active_agents ?? '—'} />
-                <MetricCard label="Churned" value={displayMetrics?.churned_agents ?? '—'} danger />
-              </div>
+              {/* Thought-process content / metrics / report — hidden behind loading screen unless revealed */}
+              {(!isRunningLive || showThoughtProcess) && (
+                <>
+                  {/* Progress bar — only for live tab while thought process is visible */}
+                  {isLive && showThoughtProcess && (
+                    <div style={{ height: 6, background: 'var(--gray-200)', borderRadius: 999, overflow: 'hidden', flexShrink: 0 }}>
+                      <div style={{
+                        height: '100%',
+                        background: 'linear-gradient(90deg, var(--accent), var(--accent-light))',
+                        borderRadius: 999,
+                        width: `${progressPct}%`,
+                        transition: 'width 0.5s ease',
+                      }} />
+                    </div>
+                  )}
 
-              {/* Main area */}
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: displayFeed.length > 0 && !sim.isRestoredFromHistory ? '1fr 260px' : '1fr',
-                gap: '0.75rem', flex: 1, overflow: 'hidden', minHeight: 0,
-              }}>
-                {showRestoredSummary ? (
-                  <RestoredSummaryPanel report={sim.restoredReport!} description={sim.restoredDescription} />
-                ) : (
-                  <InfluenceGraph
-                    agents={displayAgents}
-                    influences={displayInfluences}
-                    highlightedAgentId={highlightedAgentId}
-                    onClearHighlight={() => setHighlightedAgentId(null)}
-                  />
-                )}
-                {displayFeed.length > 0 && !sim.isRestoredFromHistory && (
-                  <ActivityFeed items={displayFeed} onAgentClick={setHighlightedAgentId} highlightedAgentId={highlightedAgentId} />
-                )}
-              </div>
+                  {/* Metrics */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '0.6rem', flexShrink: 0 }}>
+                    <MetricCard label="Total visits" value={displayMetrics?.total_visits ?? '—'} />
+                    <MetricCard label="Revenue (RM)" value={displayMetrics ? displayMetrics.total_revenue.toFixed(0) : '—'} tooltip="Estimated from your business price range (or income-based if not set), adjusted by the scenario's price change. Each visiting customer spends a random amount within your price range per visit." />
+                    <MetricCard label="Active customers" value={displayMetrics?.active_agents ?? '—'} />
+                    <MetricCard label="Churned" value={displayMetrics?.churned_agents ?? '—'} danger />
+                  </div>
+
+                  {/* Main area */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: displayFeed.length > 0 && !showReportPanel ? '1fr 260px' : '1fr',
+                    gap: '0.75rem', flex: 1, overflow: 'hidden', minHeight: 0,
+                  }}>
+                    {showReportPanel ? (
+                      <RestoredSummaryPanel
+                        report={sim.isRestoredFromHistory ? sim.restoredReport! : completedReport!}
+                        description={sim.isRestoredFromHistory ? sim.restoredDescription : completedDescription}
+                      />
+                    ) : (
+                      <InfluenceGraph
+                        agents={displayAgents}
+                        influences={displayInfluences}
+                        highlightedAgentId={highlightedAgentId}
+                        onClearHighlight={() => setHighlightedAgentId(null)}
+                      />
+                    )}
+                    {displayFeed.length > 0 && !showReportPanel && (
+                      <ActivityFeed items={displayFeed} onAgentClick={setHighlightedAgentId} highlightedAgentId={highlightedAgentId} />
+                    )}
+                  </div>
+                </>
+              )}
             </div>
             )
           })()}
@@ -431,7 +538,253 @@ export default function DashboardPage({ session }: Props) {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.4; }
         }
+        @keyframes spin-slow {
+          from { transform: rotate(0deg); }
+          to   { transform: rotate(360deg); }
+        }
+        @keyframes loading-shimmer {
+          0%   { transform: translateX(-100%); }
+          100% { transform: translateX(100%); }
+        }
+        @keyframes fade-up {
+          from { opacity: 0; transform: translateY(8px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes orbit {
+          from { transform: rotate(0deg) translateX(28px) rotate(0deg); }
+          to   { transform: rotate(360deg) translateX(28px) rotate(-360deg); }
+        }
       `}</style>
+    </div>
+  )
+}
+
+// ─── SimLoadingScreen ────────────────────────────────────────────────────────
+interface SimLoadingScreenProps {
+  scenarioName: string
+  message: string
+  progressPct: number
+  agentCount: number
+  decidedCount: number
+  monteCarloState: MonteCarloState | null
+  simStartTime: number | null
+  isPaused: boolean
+  onShowThoughtProcess: () => void
+}
+
+function SimLoadingScreen({
+  scenarioName, message, progressPct, agentCount, decidedCount,
+  monteCarloState, simStartTime, isPaused, onShowThoughtProcess,
+}: SimLoadingScreenProps) {
+  const [elapsed, setElapsed] = useState(0)
+
+  // Tick every second to keep ETA fresh
+  useEffect(() => {
+    if (!simStartTime || isPaused) return
+    const id = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - simStartTime) / 1000))
+    }, 1000)
+    return () => clearInterval(id)
+  }, [simStartTime, isPaused])
+
+  // ETA: extrapolate from current pace
+  function formatEta(): string {
+    if (progressPct <= 0 || progressPct >= 100 || elapsed <= 2) return 'Estimating…'
+    const totalSec = Math.round((elapsed / progressPct) * 100)
+    const remaining = totalSec - elapsed
+    if (remaining <= 0) return 'Almost done…'
+    if (remaining < 60) return `~${remaining}s remaining`
+    return `~${Math.ceil(remaining / 60)}min remaining`
+  }
+
+  function formatElapsed(): string {
+    if (elapsed < 60) return `${elapsed}s`
+    return `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
+  }
+
+  // Monte Carlo label
+  const mcLabel = monteCarloState
+    ? monteCarloState.current_run > 0
+      ? `Run ${monteCarloState.current_run} of ${monteCarloState.max_runs}`
+      : `Up to ${monteCarloState.max_runs} runs planned`
+    : null
+
+  return (
+    <div style={{
+      flex: 1, display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center',
+      gap: '1.75rem', padding: '2rem',
+      background: 'var(--white)', borderRadius: 12,
+      border: '1px solid var(--gray-200)',
+      overflow: 'hidden', position: 'relative',
+    }}>
+      {/* Subtle animated background rings */}
+      <div style={{
+        position: 'absolute', width: 320, height: 320,
+        borderRadius: '50%', border: '1.5px solid var(--gray-100)',
+        animation: 'spin-slow 18s linear infinite',
+        pointerEvents: 'none',
+      }} />
+      <div style={{
+        position: 'absolute', width: 220, height: 220,
+        borderRadius: '50%', border: '1.5px solid var(--gray-100)',
+        animation: 'spin-slow 12s linear infinite reverse',
+        pointerEvents: 'none',
+      }} />
+
+      {/* Orbiting dot */}
+      <div style={{
+        position: 'absolute', width: 10, height: 10,
+        borderRadius: '50%', background: 'var(--accent)',
+        opacity: 0.35,
+        animation: 'orbit 3.5s linear infinite',
+        pointerEvents: 'none',
+      }} />
+
+      {/* Central icon */}
+      <div style={{ position: 'relative', zIndex: 1 }}>
+        <div style={{
+          width: 64, height: 64, borderRadius: '50%',
+          background: 'linear-gradient(135deg, var(--accent), var(--accent-warm, #f97316))',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxShadow: '0 4px 24px rgba(0,0,0,0.12)',
+        }}>
+          <svg style={{ width: 30, height: 30, color: 'white' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+          </svg>
+        </div>
+      </div>
+
+      {/* Scenario name + status */}
+      <div style={{ textAlign: 'center', zIndex: 1, animation: 'fade-up 0.4s ease' }}>
+        <p style={{ margin: '0 0 0.35rem', fontSize: '0.72rem', fontWeight: 600, color: 'var(--gray-400)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+          {isPaused ? 'Paused' : 'Simulating'}
+        </p>
+        <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800, color: 'var(--gray-900)', fontFamily: 'var(--font-display)' }}>
+          {scenarioName || 'Running simulation…'}
+        </h2>
+      </div>
+
+      {/* Status message — updates with SSE events */}
+      <div
+        key={message}
+        style={{
+          zIndex: 1, padding: '0.6rem 1.1rem',
+          background: 'var(--gray-50)', borderRadius: 999,
+          border: '1px solid var(--gray-200)',
+          display: 'flex', alignItems: 'center', gap: '0.5rem',
+          maxWidth: 420, textAlign: 'center',
+          animation: 'fade-up 0.3s ease',
+        }}>
+        {!isPaused && (
+          <span style={{
+            width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+            background: '#22c55e',
+            animation: 'pulse-dot 1.2s infinite',
+          }} />
+        )}
+        <span style={{ fontSize: '0.85rem', color: 'var(--gray-700)', fontWeight: 500 }}>
+          {isPaused ? '⏸ Simulation paused' : message}
+        </span>
+      </div>
+
+      {/* Monte Carlo badge (when running multiple runs) */}
+      {mcLabel && (
+        <div style={{
+          zIndex: 1,
+          padding: '0.25rem 0.75rem', borderRadius: 999,
+          background: '#eff6ff', border: '1.5px solid #3b82f6',
+          fontSize: '0.75rem', fontWeight: 600, color: '#1d4ed8',
+          display: 'flex', alignItems: 'center', gap: '0.6rem',
+        }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6', display: 'inline-block', animation: 'pulse-dot 1.2s infinite' }} />
+          {mcLabel}
+          {monteCarloState && monteCarloState.wci_cv > 0 && (
+            <>
+              <span style={{ opacity: 0.35 }}>·</span>
+              <span
+                title="Result variation (CV) — lower means more consistent results"
+                style={{
+                  color: monteCarloState.wci_cv <= monteCarloState.cv_threshold
+                    ? '#15803d'
+                    : monteCarloState.wci_cv <= monteCarloState.cv_threshold * 2
+                    ? '#a16207'
+                    : '#b91c1c',
+                  cursor: 'help',
+                }}
+              >
+                {monteCarloState.wci_cv.toFixed(1)}% variation
+              </span>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Progress bar + stats */}
+      <div style={{ width: '100%', maxWidth: 400, zIndex: 1 }}>
+        {/* Bar track */}
+        <div style={{
+          height: 10, borderRadius: 999, overflow: 'hidden',
+          background: 'var(--gray-200)', position: 'relative',
+        }}>
+          <div style={{
+            height: '100%', borderRadius: 999,
+            background: 'linear-gradient(90deg, var(--accent), var(--accent-warm, #f97316))',
+            width: `${progressPct}%`,
+            transition: 'width 0.6s ease',
+            position: 'relative', overflow: 'hidden',
+          }}>
+            {/* Shimmer */}
+            {!isPaused && (
+              <div style={{
+                position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.35) 50%, transparent 100%)',
+                animation: 'loading-shimmer 1.6s ease infinite',
+              }} />
+            )}
+          </div>
+        </div>
+
+        {/* Stats row */}
+        <div style={{
+          display: 'flex', justifyContent: 'space-between',
+          marginTop: '0.5rem', fontSize: '0.75rem', color: 'var(--gray-500)',
+        }}>
+          <span>
+            <strong style={{ color: 'var(--gray-700)' }}>{decidedCount}</strong> of <strong style={{ color: 'var(--gray-700)' }}>{agentCount}</strong> customers decided
+          </span>
+          <span style={{ display: 'flex', gap: '0.75rem' }}>
+            <span>{progressPct}%</span>
+            <span style={{ color: 'var(--gray-400)' }}>·</span>
+            <span>{formatEta()}</span>
+            {elapsed > 0 && <><span style={{ color: 'var(--gray-400)' }}>·</span><span>{formatElapsed()} elapsed</span></>}
+          </span>
+        </div>
+      </div>
+
+      {/* Show thought process button */}
+      <button
+        onClick={onShowThoughtProcess}
+        style={{
+          zIndex: 1,
+          display: 'flex', alignItems: 'center', gap: '0.5rem',
+          padding: '0.55rem 1.1rem', borderRadius: 8,
+          border: '1.5px solid var(--gray-300)',
+          background: 'white', cursor: 'pointer',
+          fontSize: '0.82rem', fontWeight: 600, color: 'var(--gray-700)',
+          fontFamily: 'var(--font-family)',
+          transition: 'border-color 0.15s, color 0.15s, box-shadow 0.15s',
+          boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+        }}
+        onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.color = 'var(--accent)' }}
+        onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--gray-300)'; e.currentTarget.style.color = 'var(--gray-700)' }}
+      >
+        <svg style={{ width: 15, height: 15 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+        </svg>
+        Show thought process
+      </button>
     </div>
   )
 }

@@ -98,7 +98,7 @@ User Question: "{user_question}"
 
 Your task is to:
 1. Analyze the user's question to understand their concern or goal
-2. Suggest 3-5 relevant "what-if" scenarios to simulate
+2. Suggest 5 relevant "what-if" scenarios to simulate
 3. Rank scenarios by relevance to the question
 
 For each scenario, provide:
@@ -168,7 +168,7 @@ Real-World Context:
         prompt += f"\nMalaysia Public Holidays (Pulau Pinang):\n{holiday_context}\n"
 
     prompt += """
-Your task is to generate 2-3 CUSTOM scenarios that can be SIMULATED with consumer agents making visit/purchase decisions.
+Your task is to generate 5 CUSTOM scenarios that can be SIMULATED with consumer agents making visit/purchase decisions.
 
 CRITICAL: These scenarios will be simulated with AI customer agents who decide whether to visit the business each week. Scenarios MUST affect customer behavior (visit frequency, spending, churn).
 

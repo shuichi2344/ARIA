@@ -1701,41 +1701,53 @@ async def _run_simulation_single(sim_id: str, run_number: int = 1) -> Dict[str, 
             assigned_personalities = [None] * len(agents)
             print(f"  No target segments set — LLM will generate freely")
         
-        batch_size = 3
-        for batch_start in range(0, len(agents), batch_size):
-            if _is_aborted():
-                print(f"[INFO] Simulation {sim_id} aborted during profile generation")
-                return
+        # Generate all personalities in ONE batch call (faster & more reliable)
+        print(f"  Generating all {len(agents)} personalities in one batch...")
+        
+        try:
+            profile_texts = await llm_brain.generate_agent_profiles_batch(
+                agents=agents,
+                business_profile=business_profile,
+                assigned_personalities=assigned_personalities
+            )
             
-            batch = agents[batch_start:batch_start + batch_size]
-            batch_tasks = [
-                llm_brain.generate_agent_profile(
-                    age_range=agent['age_range'],
-                    income_level=agent['income_level'],
-                    location=business_profile.get('location', 'Georgetown'),
-                    business_profile=business_profile,
-                    assigned_personality=assigned_personalities[batch_start + j]
-                )
-                for j, agent in enumerate(batch)
-            ]
-            batch_results = await asyncio.gather(*batch_tasks)
+            print(f"✓ Batch generation complete - {len(profile_texts)} personalities created")
             
-            for i, profile_text in enumerate(batch_results):
-                agent_idx = batch_start + i
-                agents[agent_idx]['profile_text'] = profile_text
-                agents[agent_idx]['personality'] = profile_text
+            # Emit each profile to frontend
+            for i, profile_text in enumerate(profile_texts):
+                agents[i]['profile_text'] = profile_text
+                agents[i]['personality'] = profile_text
                 
-                # Emit to frontend immediately
                 await q.put({
                     "type": "agent_profile_ready",
                     "data": {
-                        "agent_id": agents[agent_idx]['agent_id'],
+                        "agent_id": agents[i]['agent_id'],
                         "profile_text": profile_text,
-                        "progress": agent_idx + 1,
+                        "progress": i + 1,
                         "total": len(agents)
                     }
                 })
-                print(f"  ✓ Agent {agent_idx}: {profile_text[:60]}...")
+                print(f"  ✓ Agent {i+1}: {profile_text[:80]}...")
+        
+        except Exception as e:
+            print(f"  ⚠ Batch generation failed completely: {e}")
+            print(f"  Using fallback personalities...")
+            # Last resort: use simple fallback for all
+            for i, agent in enumerate(agents):
+                assigned = assigned_personalities[i] if i < len(assigned_personalities) else None
+                fallback = f"Customer type: {assigned or 'regular customer'}. Visits regularly. Values quality and convenience. Spending: moderate based on {agent['income_level']} income. Loyalty: compares alternatives occasionally."
+                agents[i]['profile_text'] = fallback
+                agents[i]['personality'] = fallback
+                
+                await q.put({
+                    "type": "agent_profile_ready",
+                    "data": {
+                        "agent_id": agents[i]['agent_id'],
+                        "profile_text": fallback,
+                        "progress": i + 1,
+                        "total": len(agents)
+                    }
+                })
         
         await q.put({"type": "profile_generation_complete", "data": {"total": len(agents)}})
         print(f"✓ All {len(agents)} personalities generated")

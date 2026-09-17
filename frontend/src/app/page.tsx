@@ -63,13 +63,27 @@ export default function LandingPage() {
     refresh_token?: string
     email_confirmed?: boolean
   }) {
+    console.log('[Auth] routeAfterAuth called for user:', user.email)
     setSession(user)
     setAuthOpen(false)
     setNavigating(true)
 
+    // IMPORTANT: Save session to localStorage immediately so it's available on next page
     try {
+      localStorage.setItem('aria_session', JSON.stringify(user))
+      console.log('[Auth] Session saved to localStorage')
+    } catch (err) {
+      console.error('[Auth] Failed to save session to localStorage:', err)
+    }
+
+    try {
+      console.log('[Auth] Checking for existing business profile...')
       const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 5000)
+      const timeout = setTimeout(() => {
+        console.warn('[Auth] Profile check timed out after 5s')
+        controller.abort()
+      }, 5000)
+      
       const res = await fetch(`${API_BASE}/api/business/profile/user/${user.id}`, {
         signal: controller.signal,
         headers: {
@@ -78,17 +92,46 @@ export default function LandingPage() {
         },
       })
       clearTimeout(timeout)
+      
+      console.log('[Auth] Profile check response status:', res.status)
+      
       if (res.ok) {
         const profile = await res.json()
+        console.log('[Auth] Profile data received:', { id: profile?.id, name: profile?.business_name })
         if (profile?.id) {
           localStorage.setItem('aria_profile',    JSON.stringify(profile))
           localStorage.setItem('aria_profile_id', profile.id)
+          console.log('[Auth] Profile saved to localStorage, redirecting to dashboard')
+          // Give a tiny delay to ensure localStorage is written before navigation
+          await new Promise(resolve => setTimeout(resolve, 100))
           router.push('/dashboard')
           return
+        } else {
+          console.warn('[Auth] Profile response OK but no profile.id found:', profile)
         }
+      } else if (res.status === 404) {
+        // 404 means no profile exists - this is expected for new users
+        console.log('[Auth] No profile found (404) - redirecting to onboarding')
+      } else {
+        // Other errors (401, 500, etc.) - log but still redirect to onboarding
+        const errorText = await res.text().catch(() => '')
+        console.warn('[Auth] Profile check failed with status:', res.status, errorText)
       }
-    } catch { /* API unreachable or timed out — fall through to onboarding */ }
+    } catch (err) {
+      // Network error, timeout, or abort - still allow onboarding
+      if (err instanceof Error) {
+        console.warn('[Auth] Profile check error:', err.message)
+      } else {
+        console.warn('[Auth] Profile check failed with unknown error')
+      }
+    } finally {
+      setNavigating(false)
+    }
 
+    // If we got here, no profile was found or fetch failed - go to onboarding
+    console.log('[Auth] Redirecting to onboarding')
+    // Give a tiny delay to ensure localStorage is written before navigation
+    await new Promise(resolve => setTimeout(resolve, 100))
     router.push('/onboarding')
   }
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import ProfileWidget from '@/components/auth/ProfileWidget'
@@ -8,7 +8,7 @@ import ChatPanel from './ChatPanel'
 import ActivityFeed from './ActivityFeed'
 import InfluenceGraph from './InfluenceGraph'
 import HistorySidebar from './HistorySidebar'
-import { useSim, LIVE_TAB_ID } from './useSim'
+import { useSim } from './useSim'
 import type { MonteCarloState } from './useSim'
 import { useSession } from '@/context/SessionContext'
 import type { AriaSession, BusinessProfile, SimReport } from './types'
@@ -46,25 +46,35 @@ export default function DashboardPage({ session }: Props) {
   const sim = useSim(session.id, profile?.id)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [highlightedAgentId, setHighlightedAgentId] = useState<number | null>(null)
+  // Track which run the user is viewing via the Activity Feed pagination
+  const [activityFeedPage, setActivityFeedPage] = useState<number>(0)
   // Report from the most recently completed live simulation — shown in the right panel
   const [completedReport, setCompletedReport] = useState<SimReport | null>(null)
   const [completedDescription, setCompletedDescription] = useState<string>('')
   // Controls whether the "thought process" (agent graph + feed) is visible over the loading screen
+  // This is user-controlled and should NOT auto-reset when new runs start
   const [showThoughtProcess, setShowThoughtProcess] = useState(false)
+  const showThoughtProcessRef = useRef(false) // Persist across runs
+  
+  // Sync state and ref
+  useEffect(() => {
+    setShowThoughtProcess(showThoughtProcessRef.current)
+  }, [sim.monteCarloState?.current_run])
 
   // Capture report when a live simulation finishes
   useEffect(() => {
     if (sim.status === 'done' && !sim.isRestoredFromHistory) {
-      // Pull the report from the last completed sim snapshot
+      // Pull the report from the last completed sim snapshot (which contains averaged data for MC)
       const last = sim.completedSims[sim.completedSims.length - 1]
       if (last?.report) {
         const r = last.report
+        const rs = r.risk_summary || {}
         setCompletedReport({
-          risk_level:          r.risk_level || 'Unknown',
-          churn_rate:          r.churn_rate ?? 0,
-          visit_rate:          r.visit_rate ?? 0,
-          estimated_revenue:   r.estimated_revenue ?? 0,
-          total_agents:        r.total_agents ?? 0,
+          risk_level:          rs.risk_level || 'Unknown',
+          churn_rate:          rs.churn_rate ?? 0,
+          visit_rate:          rs.visit_rate ?? 0,
+          estimated_revenue:   rs.estimated_revenue ?? 0,
+          total_agents:        rs.total_agents ?? 0,
           archetype_breakdown: r.archetype_breakdown || {},
           recommendations:     r.recommendations || [],
           analysis:            r.analysis || '',
@@ -77,7 +87,7 @@ export default function DashboardPage({ session }: Props) {
     if (sim.status === 'idle' || sim.status === 'running') {
       setCompletedReport(null)
       setCompletedDescription('')
-      if (sim.status === 'running') setShowThoughtProcess(false)
+      // DON'T reset showThoughtProcess - user's preference should persist
     }
   }, [sim.status, sim.completedSims, sim.isRestoredFromHistory])
 
@@ -332,109 +342,87 @@ export default function DashboardPage({ session }: Props) {
 
           {/* Active simulation */}
           {(sim.status !== 'idle' || sim.agents.length > 0) && (() => {
-            // Resolve what to display based on active tab
-            const isLive = sim.activeTabId === LIVE_TAB_ID || sim.activeTabId === null
-            const tabSim = isLive ? null : sim.completedSims.find(s => s.id === sim.activeTabId)
-
-            const displayMetrics  = tabSim ? tabSim.metrics   : sim.metrics
-            const displayAgents   = tabSim ? tabSim.agents     : sim.agents
-            const displayFeed     = tabSim ? tabSim.feed       : sim.feed
-            const displayInfluences = tabSim ? tabSim.influences : sim.influences
-            const displayName     = tabSim ? tabSim.scenarioName : sim.scenarioName
-
-            // For restored history items shown in the summary panel
+            // Determine which run to display based on Activity Feed pagination
+            // For Monte Carlo: completedSims has all individual runs + summary at the end
+            // ActivityFeed pages correspond to individual runs only
+            const mcState = sim.monteCarloState
+            const isMonteCarlo = mcState && mcState.max_runs > 1
+            
+            // Find the summary (last entry with scenarioName containing "Summary")
+            const summaryIndex = sim.completedSims.findIndex(s => s.scenarioName.includes('Summary'))
+            const hasSummary = summaryIndex >= 0
+            
+            // Check if we're showing the report panel
             const showRestoredSummary = sim.isRestoredFromHistory && sim.restoredReport && sim.completedSims.length === 0
-
-            // Also show the full report panel when a live sim has just completed
             const justCompletedSim = !sim.isRestoredFromHistory && sim.status === 'done' && completedReport
             const showReportPanel = showRestoredSummary || justCompletedSim
+            
+            // Determine which completed run to view
+            let viewingCompletedRun: typeof sim.completedSims[0] | null = null
+            
+            // When report panel is showing, always use summary data for metrics
+            if (showReportPanel && hasSummary) {
+              viewingCompletedRun = sim.completedSims[summaryIndex]
+            } else if (activityFeedPage < sim.completedSims.length) {
+              // Otherwise show the specific run based on activity feed page
+              viewingCompletedRun = sim.completedSims[activityFeedPage]
+            }
+
+            const displayMetrics  = viewingCompletedRun ? viewingCompletedRun.metrics   : sim.metrics
+            const displayAgents   = viewingCompletedRun ? viewingCompletedRun.agents    : sim.agents
+            const displayInfluences = viewingCompletedRun ? viewingCompletedRun.influences : sim.influences
+            const displayName     = viewingCompletedRun ? viewingCompletedRun.scenarioName : sim.scenarioName
+            
+            // For ActivityFeed, always pass the complete feed so it can handle pagination internally
+            const displayFeed = sim.feed
 
             // Show simplified loading screen while sim is running (unless user opened thought process)
-            const isRunningLive = isLive && (sim.status === 'running' || sim.status === 'paused')
+            const isRunningLive = sim.status === 'running' || sim.status === 'paused'
 
             return (
             <div style={{
               flex: 1, display: 'flex', flexDirection: 'column',
               overflow: 'hidden', padding: '1rem 1.25rem', gap: '0.75rem',
             }}>
-              {/* Tab bar — only shown when there are 2+ simulations in session */}
-              {sim.completedSims.length > 1 && (
-                <div style={{
-                  display: 'flex', gap: '0.25rem', flexShrink: 0,
-                  borderBottom: '1px solid var(--gray-200)',
-                  paddingBottom: '0.5rem', overflowX: 'auto',
-                  scrollbarWidth: 'none',
-                }}>
-                  {sim.completedSims.map((s, i) => {
-                    const isActive = sim.activeTabId === s.id
-                    return (
-                      <button
-                        key={s.id}
-                        onClick={() => sim.setActiveTabId(s.id)}
-                        style={{
-                          flexShrink: 0,
-                          padding: '0.3rem 0.75rem',
-                          borderRadius: 6,
-                          border: `1.5px solid ${isActive ? 'var(--accent)' : 'var(--gray-200)'}`,
-                          background: isActive ? 'var(--accent-light, #e0f2fe)' : 'white',
-                          color: isActive ? 'var(--accent)' : 'var(--gray-600)',
-                          fontSize: '0.75rem', fontWeight: isActive ? 700 : 500,
-                          cursor: 'pointer', whiteSpace: 'nowrap',
-                          transition: 'all 0.15s ease',
-                        }}
-                      >
-                        {i + 1}. {s.scenarioName}
-                      </button>
-                    )
-                  })}
-                  {/* Live tab — shown while a sim is running */}
-                  {(sim.status === 'running' || sim.status === 'paused') && (
-                    <button
-                      onClick={() => sim.setActiveTabId(LIVE_TAB_ID)}
-                      style={{
-                        flexShrink: 0,
-                        padding: '0.3rem 0.75rem',
-                        borderRadius: 6,
-                        border: `1.5px solid ${isLive ? '#22c55e' : 'var(--gray-200)'}`,
-                        background: isLive ? '#f0fdf4' : 'white',
-                        color: isLive ? '#15803d' : 'var(--gray-600)',
-                        fontSize: '0.75rem', fontWeight: isLive ? 700 : 500,
-                        cursor: 'pointer', whiteSpace: 'nowrap',
-                        display: 'flex', alignItems: 'center', gap: '0.3rem',
-                      }}
-                    >
-                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', display: 'inline-block', animation: 'pulse-dot 1.2s infinite' }} />
-                      Live
-                    </button>
-                  )}
-                </div>
-              )}
-
               {/* Top bar */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1, minWidth: 0 }}>
                   <span style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--gray-900)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {displayName || '—'}
                   </span>
+                  {/* Show which run is being viewed via Activity Feed */}
+                  {viewingCompletedRun && !viewingCompletedRun.scenarioName.includes('Summary') && (
+                    <span style={{
+                      fontSize: '0.7rem',
+                      fontWeight: 600,
+                      padding: '0.15rem 0.5rem',
+                      borderRadius: 4,
+                      background: 'var(--gray-100)',
+                      color: 'var(--gray-600)',
+                    }}>
+                      Viewing Run {activityFeedPage + 1}
+                    </span>
+                  )}
                   {/* Monte Carlo badge — shows live run progress and convergence */}
-                  {sim.monteCarloState && !sim.isRestoredFromHistory && !isRunningLive && (
+                  {sim.monteCarloState && !sim.isRestoredFromHistory && isRunningLive && (sim.status === 'running' || sim.status === 'paused') && (
                     <MonteCarloBadge mc={sim.monteCarloState} />
                   )}
                 </div>
-                {isLive && (sim.status === 'running' || sim.status === 'paused') && (
+                {isRunningLive && !viewingCompletedRun && (sim.status === 'running' || sim.status === 'paused') && (
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <CtrlBtn onClick={sim.togglePause} title="Pause / Resume">
+                    <CtrlBtn onClick={sim.togglePause} title={sim.isPaused ? 'Resume' : 'Pause'}>
                       {sim.isPaused
                         ? <svg style={{ width: 18, height: 18 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                         : <svg style={{ width: 18, height: 18 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
                       }
                     </CtrlBtn>
+                    <TerminateBtn onClick={sim.terminate} />
                   </div>
                 )}
               </div>
 
               {/* Loading screen layer — shown while sim is running, hidden when user peeks at thought process */}
-              {isRunningLive && !showThoughtProcess && (
+              {isRunningLive && !showThoughtProcess && !showThoughtProcessRef.current && (
                 <SimLoadingScreen
                   scenarioName={displayName}
                   message={sim.loadingMessage}
@@ -444,12 +432,15 @@ export default function DashboardPage({ session }: Props) {
                   monteCarloState={sim.monteCarloState}
                   simStartTime={sim.simStartTime.current}
                   isPaused={sim.isPaused}
-                  onShowThoughtProcess={() => setShowThoughtProcess(true)}
+                  onShowThoughtProcess={() => {
+                    setShowThoughtProcess(true)
+                    showThoughtProcessRef.current = true
+                  }}
                 />
               )}
 
               {/* Thought-process toggle strip — shown when user has peeked inside */}
-              {isRunningLive && showThoughtProcess && (
+              {isRunningLive && (showThoughtProcess || showThoughtProcessRef.current) && (
                 <div style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   padding: '0.45rem 0.75rem',
@@ -462,7 +453,10 @@ export default function DashboardPage({ session }: Props) {
                     <span style={{ color: 'var(--gray-400)' }}>· {progressPct}%</span>
                   </div>
                   <button
-                    onClick={() => setShowThoughtProcess(false)}
+                    onClick={() => {
+                      setShowThoughtProcess(false)
+                      showThoughtProcessRef.current = false
+                    }}
                     style={{
                       display: 'flex', alignItems: 'center', gap: '0.35rem',
                       padding: '0.25rem 0.65rem', borderRadius: 6, border: '1.5px solid var(--gray-300)',
@@ -479,10 +473,10 @@ export default function DashboardPage({ session }: Props) {
               )}
 
               {/* Thought-process content / metrics / report — hidden behind loading screen unless revealed */}
-              {(!isRunningLive || showThoughtProcess) && (
+              {(!isRunningLive || showThoughtProcess || showThoughtProcessRef.current) && (
                 <>
-                  {/* Progress bar — only for live tab while thought process is visible */}
-                  {isLive && showThoughtProcess && (
+                  {/* Progress bar — only while viewing live/latest run and thought process is visible */}
+                  {!viewingCompletedRun && (showThoughtProcess || showThoughtProcessRef.current) && (
                     <div style={{ height: 6, background: 'var(--gray-200)', borderRadius: 999, overflow: 'hidden', flexShrink: 0 }}>
                       <div style={{
                         height: '100%',
@@ -515,6 +509,7 @@ export default function DashboardPage({ session }: Props) {
                       />
                     ) : (
                       <InfluenceGraph
+                        key={`graph-run${activityFeedPage}-v${displayInfluences.length}`}
                         agents={displayAgents}
                         influences={displayInfluences}
                         highlightedAgentId={highlightedAgentId}
@@ -522,7 +517,12 @@ export default function DashboardPage({ session }: Props) {
                       />
                     )}
                     {displayFeed.length > 0 && !showReportPanel && (
-                      <ActivityFeed items={displayFeed} onAgentClick={setHighlightedAgentId} highlightedAgentId={highlightedAgentId} />
+                      <ActivityFeed 
+                        items={displayFeed} 
+                        onAgentClick={setHighlightedAgentId} 
+                        highlightedAgentId={highlightedAgentId}
+                        onPageChange={setActivityFeedPage}
+                      />
                     )}
                   </div>
                 </>
@@ -553,6 +553,20 @@ export default function DashboardPage({ session }: Props) {
         @keyframes orbit {
           from { transform: rotate(0deg) translateX(28px) rotate(0deg); }
           to   { transform: rotate(360deg) translateX(28px) rotate(-360deg); }
+        }
+        @keyframes pulse-ring {
+          0% {
+            transform: scale(1);
+            opacity: 0.4;
+          }
+          50% {
+            transform: scale(1.15);
+            opacity: 0.2;
+          }
+          100% {
+            transform: scale(1.3);
+            opacity: 0;
+          }
         }
       `}</style>
     </div>
@@ -641,21 +655,6 @@ function SimLoadingScreen({
         pointerEvents: 'none',
       }} />
 
-      {/* Central icon */}
-      <div style={{ position: 'relative', zIndex: 1 }}>
-        <div style={{
-          width: 64, height: 64, borderRadius: '50%',
-          background: 'linear-gradient(135deg, var(--accent), var(--accent-warm, #f97316))',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          boxShadow: '0 4px 24px rgba(0,0,0,0.12)',
-        }}>
-          <svg style={{ width: 30, height: 30, color: 'white' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
-          </svg>
-        </div>
-      </div>
-
       {/* Scenario name + status */}
       <div style={{ textAlign: 'center', zIndex: 1, animation: 'fade-up 0.4s ease' }}>
         <p style={{ margin: '0 0 0.35rem', fontSize: '0.72rem', fontWeight: 600, color: 'var(--gray-400)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
@@ -720,48 +719,6 @@ function SimLoadingScreen({
           )}
         </div>
       )}
-
-      {/* Progress bar + stats */}
-      <div style={{ width: '100%', maxWidth: 400, zIndex: 1 }}>
-        {/* Bar track */}
-        <div style={{
-          height: 10, borderRadius: 999, overflow: 'hidden',
-          background: 'var(--gray-200)', position: 'relative',
-        }}>
-          <div style={{
-            height: '100%', borderRadius: 999,
-            background: 'linear-gradient(90deg, var(--accent), var(--accent-warm, #f97316))',
-            width: `${progressPct}%`,
-            transition: 'width 0.6s ease',
-            position: 'relative', overflow: 'hidden',
-          }}>
-            {/* Shimmer */}
-            {!isPaused && (
-              <div style={{
-                position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-                background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.35) 50%, transparent 100%)',
-                animation: 'loading-shimmer 1.6s ease infinite',
-              }} />
-            )}
-          </div>
-        </div>
-
-        {/* Stats row */}
-        <div style={{
-          display: 'flex', justifyContent: 'space-between',
-          marginTop: '0.5rem', fontSize: '0.75rem', color: 'var(--gray-500)',
-        }}>
-          <span>
-            <strong style={{ color: 'var(--gray-700)' }}>{decidedCount}</strong> of <strong style={{ color: 'var(--gray-700)' }}>{agentCount}</strong> customers decided
-          </span>
-          <span style={{ display: 'flex', gap: '0.75rem' }}>
-            <span>{progressPct}%</span>
-            <span style={{ color: 'var(--gray-400)' }}>·</span>
-            <span>{formatEta()}</span>
-            {elapsed > 0 && <><span style={{ color: 'var(--gray-400)' }}>·</span><span>{formatElapsed()} elapsed</span></>}
-          </span>
-        </div>
-      </div>
 
       {/* Show thought process button */}
       <button
@@ -842,27 +799,189 @@ function InfoTooltip({ text }: { text: string }) {
   )
 }
 
-function CtrlBtn({ onClick, title, children }: { onClick: () => void; title?: string; children: React.ReactNode }) {
+function CtrlBtn({ onClick, title, children, danger }: { onClick: () => void; title?: string; children: React.ReactNode; danger?: boolean }) {
   const [hov, setHov] = useState(false)
   return (
     <button
       onClick={onClick}
-      title={title}
       onMouseEnter={() => setHov(true)}
       onMouseLeave={() => setHov(false)}
+      title={title}
       style={{
-        display: 'flex', alignItems: 'center', gap: '0.3rem',
-        background: 'var(--white)',
-        border: `1.5px solid ${hov ? 'var(--accent)' : 'var(--gray-200)'}`,
-        borderRadius: 6, padding: '0.35rem 0.7rem',
-        fontSize: '0.8rem', fontWeight: 600,
-        cursor: 'pointer', color: 'var(--gray-900)',
-        transition: 'border-color 0.2s',
+        background: 'none',
+        border: `1.5px solid ${danger ? '#ef4444' : 'var(--gray-300)'}`,
+        borderRadius: 6,
+        padding: '0.3rem 0.5rem',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        color: danger ? (hov ? '#dc2626' : '#ef4444') : (hov ? 'var(--accent)' : 'var(--gray-700)'),
+        transition: 'all 0.15s',
         fontFamily: 'var(--font-family)',
       }}
     >
       {children}
     </button>
+  )
+}
+
+function TerminateBtn({ onClick }: { onClick: () => void }) {
+  const [hov, setHov] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
+  
+  const handleConfirm = () => {
+    setShowConfirm(false)
+    onClick()
+  }
+  
+  return (
+    <>
+      <button
+        onClick={() => setShowConfirm(true)}
+        onMouseEnter={() => setHov(true)}
+        onMouseLeave={() => setHov(false)}
+        title="Stop simulation"
+        style={{
+          background: hov ? '#ef4444' : 'transparent',
+          border: '1.5px solid #ef4444',
+          borderRadius: 6,
+          padding: '0.3rem 0.75rem',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          color: hov ? 'white' : '#ef4444',
+          fontSize: '0.8rem',
+          fontWeight: 600,
+          transition: 'all 0.15s',
+          fontFamily: 'var(--font-family)',
+        }}
+      >
+        Terminate
+      </button>
+      
+      {showConfirm && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          animation: 'fadeIn 0.15s ease',
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: 12,
+            padding: '1.5rem',
+            maxWidth: 420,
+            width: '90%',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            animation: 'slideUp 0.2s ease',
+          }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.75rem',
+              marginBottom: '1rem',
+            }}>
+              <div style={{
+                width: 40,
+                height: 40,
+                borderRadius: '50%',
+                background: '#fef2f2',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}>
+                <svg style={{ width: 20, height: 20, color: '#ef4444' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                  <line x1="12" y1="9" x2="12" y2="13"/>
+                  <line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+              </div>
+              <h3 style={{
+                margin: 0,
+                fontSize: '1.1rem',
+                fontWeight: 700,
+                color: 'var(--gray-900)',
+              }}>
+                Terminate Simulation?
+              </h3>
+            </div>
+            
+            <p style={{
+              margin: '0 0 1.5rem 0',
+              fontSize: '0.9rem',
+              lineHeight: 1.6,
+              color: 'var(--gray-700)',
+            }}>
+              This will stop the current simulation and remove all progress. This action cannot be undone.
+            </p>
+            
+            <div style={{
+              display: 'flex',
+              gap: '0.75rem',
+              justifyContent: 'flex-end',
+            }}>
+              <button
+                onClick={() => setShowConfirm(false)}
+                style={{
+                  background: 'var(--gray-100)',
+                  border: 'none',
+                  borderRadius: 6,
+                  padding: '0.5rem 1rem',
+                  cursor: 'pointer',
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  color: 'var(--gray-700)',
+                  transition: 'background 0.15s',
+                  fontFamily: 'var(--font-family)',
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'var(--gray-200)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'var(--gray-100)'}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirm}
+                style={{
+                  background: '#ef4444',
+                  border: 'none',
+                  borderRadius: 6,
+                  padding: '0.5rem 1rem',
+                  cursor: 'pointer',
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  color: 'white',
+                  transition: 'background 0.15s',
+                  fontFamily: 'var(--font-family)',
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = '#dc2626'}
+                onMouseLeave={(e) => e.currentTarget.style.background = '#ef4444'}
+              >
+                Terminate
+              </button>
+            </div>
+          </div>
+          
+          <style>{`
+            @keyframes fadeIn {
+              from { opacity: 0; }
+              to { opacity: 1; }
+            }
+            @keyframes slideUp {
+              from { opacity: 0; transform: translateY(10px); }
+              to { opacity: 1; transform: translateY(0); }
+            }
+          `}</style>
+        </div>
+      )}
+    </>
   )
 }
 

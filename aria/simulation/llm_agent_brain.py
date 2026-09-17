@@ -7,6 +7,7 @@ The LLM serves as the 'brain' of customer agents, generating:
 """
 
 import re
+import json
 from aria.llm.llm_client import LLMClient
 from typing import Dict, List, Optional
 
@@ -23,14 +24,60 @@ EMOJI_PATTERN = re.compile("["
 
 
 def _clean_response(raw: str) -> str:
-    """Strip thinking tags, emojis, and explanation artifacts from LLM output."""
+    """Strip thinking tags, emojis, word counts, and explanation artifacts from LLM output."""
     text = THINK_PATTERN.sub('', raw).strip()
     text = text.split('**Explanation:**')[0].strip()
     text = text.split('Explanation:')[0].strip()
     text = text.split('**Note:**')[0].strip()
     text = text.split('Note:')[0].strip()
+    text = text.split('**Test:**')[0].strip()
+    text = text.split('Test:')[0].strip()
+    text = text.split('This is a test')[0].strip()
     text = EMOJI_PATTERN.sub('', text)
+    
+    # Strip trailing word/character count annotations like "(70 words)" or "(68 words)"
+    text = re.sub(r'\s*\(\d+\s+words?\)\s*$', '', text, flags=re.IGNORECASE).strip()
+    
+    # Fix malformed "They asked:" or similar prefixes
+    # Pattern: "They asked: 'They' is..." or "They: 'They is..."
+    text = re.sub(r'^(They|He|She)\s+(asked|said)?:\s*[\'"]?\1[\'"]?\s+is\s+', r'\1 is ', text, flags=re.IGNORECASE)
+    
+    # Also fix quoted pronoun at start: "'They' is a..." → "They are a..."
+    text = re.sub(r'^[\'"]?(They|He|She)[\'"]?\s+is\s+a\s+', r'\1 are a ', text, flags=re.IGNORECASE)
+    
+    # Remove "Profile:" prefix if present
+    text = re.sub(r'^Profile:\s*', '', text, flags=re.IGNORECASE)
+    
     return text.strip()
+
+
+def _format_structured_personality(
+    customer_type: str,
+    visit_frequency: str, 
+    values: str,
+    spending_habit: str,
+    loyalty_factor: str
+) -> str:
+    """
+    Format personality using a fixed structure to ensure consistency.
+    
+    Args:
+        customer_type: e.g., "student", "working professional", "family with kids"
+        visit_frequency: e.g., "2-3 times per week", "once weekly", "occasionally"
+        values: What they prioritize, e.g., "convenience and WiFi", "affordable family meals"
+        spending_habit: How they manage budget, e.g., "stays under RM20", "compares prices"
+        loyalty_factor: What keeps or breaks loyalty, e.g., "switches if WiFi becomes unreliable"
+    
+    Returns:
+        Formatted personality string (50-70 words)
+    """
+    return (
+        f"Customer type: {customer_type}. "
+        f"Visits {visit_frequency}. "
+        f"Values {values} most. "
+        f"Spending: {spending_habit}. "
+        f"Loyalty: {loyalty_factor}."
+    )
 
 
 class LLMAgentBrain:
@@ -51,6 +98,217 @@ class LLMAgentBrain:
         self.client = LLMClient()
         self.model = model_name
         
+    async def generate_agent_profiles_batch(
+        self,
+        agents: List[Dict],
+        business_profile: Optional[Dict] = None,
+        assigned_personalities: List[Optional[str]] = None
+    ) -> List[str]:
+        """
+        Generate personalities for ALL agents in one LLM call.
+        More reliable and faster than individual calls.
+        
+        Args:
+            agents: List of agent dicts with age_range, income_level, etc.
+            business_profile: Business info
+            assigned_personalities: Pre-assigned personality types for each agent
+        
+        Returns:
+            List of formatted personality strings (one per agent)
+        """
+        if not agents:
+            return []
+        
+        # Build prompt for batch generation
+        location = business_profile.get('location', 'Georgetown') if business_profile else 'Georgetown'
+        business_name = business_profile.get('name', business_profile.get('business_name', '')) if business_profile else ''
+        business_type = business_profile.get('type', business_profile.get('business_type', '')) if business_profile else ''
+        
+        business_info = ""
+        if business_profile:
+            price_min = business_profile.get('price_range_min', 0)
+            price_max = business_profile.get('price_range_max', 0)
+            target_audience = business_profile.get('target_audience', '')
+            usp = business_profile.get('unique_selling_points', '')
+            
+            business_info = f"\nBusiness: {business_name}"
+            if business_type:
+                business_info += f" ({business_type})"
+            if price_min > 0 and price_max > 0:
+                business_info += f"\nPrice range: RM{price_min:.2f} - RM{price_max:.2f}"
+            if target_audience:
+                business_info += f"\nTarget audience: {target_audience}"
+            if usp:
+                business_info += f"\nWhat makes it special: {usp}"
+        
+        # Build agent list for prompt
+        agent_specs = []
+        for i, agent in enumerate(agents):
+            income_level = agent.get('income_level', 'M40')
+            age_range = agent.get('age_range', '25-34')
+            assigned_type = assigned_personalities[i] if assigned_personalities and i < len(assigned_personalities) else None
+            
+            income_desc = self.INCOME_DESCRIPTIONS.get(income_level, self.INCOME_DESCRIPTIONS["M40"])
+            
+            agent_spec = f"Agent {i+1}: {age_range} years old, {income_level} income"
+            if assigned_type:
+                agent_spec += f", must be a {assigned_type}"
+            
+            agent_specs.append(agent_spec)
+        
+        prompt = f"""Generate {len(agents)} distinct Malaysian customer personalities for a business simulation.
+
+Business Context:
+{business_info}
+Location: {location}
+
+Agents to create:
+{chr(10).join(agent_specs)}
+
+CRITICAL: Respond with ONLY a valid JSON array containing {len(agents)} complete personality objects. NO explanations, NO thinking process, NO commentary.
+
+Required format - JSON array with {len(agents)} objects:
+[
+  {{
+    "customer_type": "3-6 word description",
+    "visit_frequency": "how often they visit",
+    "values": "15-25 words about priorities",
+    "spending_habit": "10-20 words about budget",
+    "loyalty_factor": "15-25 words about loyalty"
+  }},
+  ... ({len(agents)} total objects)
+]
+
+MANDATORY RULES:
+1. Output ONLY the JSON array - nothing else
+2. Array must have EXACTLY {len(agents)} objects
+3. Each object must have ALL 5 fields complete
+4. NO meta-commentary, NO "seems incomplete", NO thinking process
+5. Each personality must be UNIQUE and DIFFERENT
+6. Use Malaysian context (RM currency, local habits, behaviors)
+7. Match assigned personality types where specified
+8. Income levels guide spending:
+   - B40: Very price-conscious, budgets carefully, RM5-15 per visit
+   - M40: Moderate spending, balances price and quality, RM15-30 per visit
+   - T20: Comfortable spending, values quality, RM30-50+ per visit
+
+GOOD EXAMPLE (for 2 agents):
+[
+  {{
+    "customer_type": "university student from nearby campus",
+    "visit_frequency": "2-3 times weekly between classes",
+    "values": "free WiFi and power outlets for study sessions, quiet corners, affordable drinks",
+    "spending_habit": "orders cheapest drink (RM6-8), stays 2-3 hours, never buys food to save money",
+    "loyalty_factor": "will switch to library or cheaper kopitiam if prices increase or if long-stay customers get asked to leave"
+  }},
+  {{
+    "customer_type": "retired teacher enjoying morning routine",
+    "visit_frequency": "every weekday morning at 9am sharp",
+    "values": "familiar faces, traditional kopi-o preparation, consistent taste, peaceful morning atmosphere",
+    "spending_habit": "always orders kopi-o and toast, spends exactly RM9.50 daily, tips RM0.50 for good service",
+    "loyalty_factor": "extremely loyal after 15 years of daily visits, only closure or major recipe changes would drive away"
+  }}
+]
+
+Now generate the complete JSON array for all {len(agents)} agents:"""
+
+        try:
+            response = await self.client.generate(
+                prompt=prompt,
+                temperature=0.9,  # Higher temp for more variety
+                max_tokens=6000   # Allow for large output
+            )
+            
+            raw_response = response['response'].strip()
+            
+            # Clean markdown code blocks
+            json_text = raw_response
+            if '```json' in json_text:
+                json_text = json_text.split('```json')[1].split('```')[0].strip()
+            elif '```' in json_text:
+                json_text = json_text.split('```')[1].split('```')[0].strip()
+            
+            # Find JSON array
+            array_match = re.search(r'\[[\s\S]*\]', json_text)
+            if array_match:
+                json_text = array_match.group()
+            
+            # Parse JSON
+            personalities_data = json.loads(json_text)
+            
+            if not isinstance(personalities_data, list):
+                raise ValueError("Response is not a JSON array")
+            
+            if len(personalities_data) != len(agents):
+                print(f"   ⚠ LLM returned {len(personalities_data)} personalities, expected {len(agents)}")
+                # Pad or trim to match
+                while len(personalities_data) < len(agents):
+                    personalities_data.append(personalities_data[-1])  # Duplicate last one
+                personalities_data = personalities_data[:len(agents)]
+            
+            # Format each personality
+            formatted = []
+            for i, data in enumerate(personalities_data):
+                required = ['customer_type', 'visit_frequency', 'values', 'spending_habit', 'loyalty_factor']
+                if all(k in data for k in required):
+                    formatted.append(_format_structured_personality(
+                        customer_type=data['customer_type'],
+                        visit_frequency=data['visit_frequency'],
+                        values=data['values'],
+                        spending_habit=data['spending_habit'],
+                        loyalty_factor=data['loyalty_factor']
+                    ))
+                else:
+                    # Missing fields - use fallback
+                    print(f"   ⚠ Agent {i+1} missing fields: {[k for k in required if k not in data]}")
+                    formatted.append(self._get_fallback_personality(agents[i], assigned_personalities[i] if assigned_personalities and i < len(assigned_personalities) else None))
+            
+            return formatted
+            
+        except Exception as e:
+            print(f"   ⚠ Batch generation failed: {e}")
+            print(f"   ⚠ Falling back to individual generation")
+            # Fall back to individual generation
+            return await self._generate_individual_fallback(agents, business_profile, assigned_personalities)
+    
+    def _get_fallback_personality(self, agent: Dict, assigned_type: Optional[str]) -> str:
+        """Generate a basic fallback personality when parsing fails."""
+        income = agent.get('income_level', 'M40')
+        age = agent.get('age_range', '25-34')
+        customer_type = assigned_type or 'regular customer'
+        
+        return _format_structured_personality(
+            customer_type=f"{customer_type} in {age} age range",
+            visit_frequency="regularly visits",
+            values="quality service and good value for money",
+            spending_habit=f"budgets based on {income} income, spends moderately",
+            loyalty_factor="price-sensitive but values consistency, compares alternatives occasionally"
+        )
+    
+    async def _generate_individual_fallback(
+        self,
+        agents: List[Dict],
+        business_profile: Optional[Dict],
+        assigned_personalities: List[Optional[str]]
+    ) -> List[str]:
+        """Fallback to individual generation if batch fails."""
+        results = []
+        for i, agent in enumerate(agents):
+            assigned = assigned_personalities[i] if assigned_personalities and i < len(assigned_personalities) else None
+            try:
+                personality = await self.generate_agent_profile(
+                    age_range=agent.get('age_range', '25-34'),
+                    income_level=agent.get('income_level', 'M40'),
+                    location=business_profile.get('location', 'Georgetown') if business_profile else 'Georgetown',
+                    business_profile=business_profile,
+                    assigned_personality=assigned
+                )
+                results.append(personality)
+            except Exception as e:
+                print(f"   ⚠ Agent {i+1} individual generation failed: {e}")
+                results.append(self._get_fallback_personality(agent, assigned))
+        return results
+    
     async def generate_agent_profile(
         self, 
         age_range: str, 
@@ -126,36 +384,93 @@ Demographics:
 {business_info}
 {personality_guidance}
 
-Write a 3-5 sentence profile covering:
-1. Who they are (lifestyle/occupation) — clearly state their role (e.g., "a university student", "a freelance designer", "a working professional", "a retiree", etc)
-2. Their relationship with this business (how often they visit, why they come)
-3. What they value most (price? quality? convenience? ambiance? speed?)
-4. Their spending habits based on their income level (careful with money? splurges? compares prices?)
-5. One unique trait affecting loyalty (e.g., "switches if closer option opens", "brings family every weekend", "only comes when friends suggest it", "visits after gym sessions")
+YOU MUST RESPOND WITH ONLY A VALID JSON OBJECT. NO EXPLANATIONS. NO THINKING PROCESS. NO COMMENTARY.
 
-STRICT RULES:
-- Use third person ("They" or "This person")
-- Be specific and concrete, not generic — give UNIQUE details that differentiate this person from others
-- Keep under 80 words
-- No names
-- Malaysian context (mention local habits, preferences)
-- The FIRST sentence must clearly identify their occupation/lifestyle type
-- Each profile must feel like a DIFFERENT person — vary their habits, motivations, and quirks
-- Do NOT invent facts about the business that are not provided above
-- Do NOT mention scenarios, price changes, or hypothetical situations — only describe who this person IS
+Required JSON format (all 5 fields are mandatory):
+{{
+  "customer_type": "3-6 word description of who they are",
+  "visit_frequency": "how often they visit",
+  "values": "15-25 words about what they prioritize",
+  "spending_habit": "10-20 words about budget management",
+  "loyalty_factor": "15-25 words about what keeps or breaks loyalty"
+}}
 
-Profile:"""
+CRITICAL RULES:
+1. Output ONLY the JSON object above - nothing else
+2. ALL 5 fields must be present and complete
+3. NO meta-commentary like "seems incomplete", "let me correct", "we guess"
+4. NO thinking process - just the final JSON
+5. NO partial JSON - complete all fields before responding
+6. Customer type must match: {assigned_personality if assigned_personality else 'appropriate target customer'}
+7. Use Malaysian context (RM currency, local habits)
+
+GOOD EXAMPLE:
+{{
+  "customer_type": "retired teacher enjoying cafe culture",
+  "visit_frequency": "twice weekly in the mornings",
+  "values": "familiar atmosphere, traditional coffee preparation, and affordable prices for daily visits",
+  "spending_habit": "orders kopi-o and toast daily, spends RM8-12 per visit, never exceeds RM15",
+  "loyalty_factor": "extremely loyal due to 10-year routine, only major closure or price doubling would drive away"
+}}
+
+BAD EXAMPLE (DO NOT DO THIS):
+{{
+  "customer_type": "parent with school-aged children",
+  "visit_frequency": "once every two weeks",
+  "values": "affordable meals",
+  "spending_habit": "seems incomplete. Let me correct it based on
+
+^ This is WRONG. Complete ALL fields properly before responding.
+
+Now generate ONLY the complete JSON for a {assigned_personality if assigned_personality else 'customer'}:"""
 
         response = await self.client.generate(
             prompt=prompt,
-            temperature=0.7,
-            max_tokens=2000
+            temperature=0.85,
+            max_tokens=400
         )
         
-        result = _clean_response(response['response'])
+        raw_response = response['response'].strip()
         
-        if not result:
-            result = f"A {income_level} customer in {location} who visits regularly. Price-conscious and values convenience."
+        # Try to parse as JSON
+        try:
+            # Clean up response - remove markdown code blocks if present
+            json_text = raw_response
+            if '```json' in json_text:
+                json_text = json_text.split('```json')[1].split('```')[0].strip()
+            elif '```' in json_text:
+                json_text = json_text.split('```')[1].split('```')[0].strip()
+            
+            # Remove any text before/after the JSON object
+            json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', json_text, re.DOTALL)
+            if json_match:
+                json_text = json_match.group()
+            
+            data = json.loads(json_text)
+            
+            # Validate required fields
+            required = ['customer_type', 'visit_frequency', 'values', 'spending_habit', 'loyalty_factor']
+            if all(k in data for k in required):
+                # Format using structured template
+                result = _format_structured_personality(
+                    customer_type=data['customer_type'],
+                    visit_frequency=data['visit_frequency'],
+                    values=data['values'],
+                    spending_habit=data['spending_habit'],
+                    loyalty_factor=data['loyalty_factor']
+                )
+                return result
+            else:
+                print(f"   ⚠ JSON missing required fields, falling back to text cleaning")
+        except (json.JSONDecodeError, KeyError, AttributeError) as e:
+            print(f"   ⚠ JSON parsing failed ({e}), falling back to text cleaning")
+        
+        # Fallback: clean the text response
+        result = _clean_response(raw_response)
+        
+        if not result or len(result) < 20:
+            # Last resort fallback
+            result = f"Customer type: {assigned_personality or 'regular customer'}. Visits regularly. Values {', '.join(business_profile.get('unique_selling_points', 'quality service').split(',')[:2]) if business_profile else 'convenience'}. Spending: stays within budget based on {income_level} income. Loyalty: price-sensitive, compares alternatives."
         
         return result
     
@@ -207,7 +522,7 @@ Write a 3-5 sentence profile covering:
 
 Rules:
 - Use third person ("This business" or "They")
-- Be specific to Malaysian SME context
+- Be specific to Malaysian MSME context
 - Keep under 80 words
 - No business names
 

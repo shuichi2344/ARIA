@@ -45,8 +45,13 @@ export default function InfluenceGraph({ agents, influences, highlightedAgentId,
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null)
   const [selected, setSelected] = useState<Selection | null>(null)
 
+  // Track if this is the initial mount or a data change requiring full redraw
+  const dataVersionRef = useRef(0)
+  
   const draw = useCallback(() => {
     if (!svgRef.current || !wrapRef.current || agents.length === 0) return
+
+    console.log(`🎨 Drawing graph: ${agents.length} agents, ${influences.length} influences`)
 
     const W = wrapRef.current.clientWidth  || 600
     const H = wrapRef.current.clientHeight || 400
@@ -63,18 +68,11 @@ export default function InfluenceGraph({ agents, influences, highlightedAgentId,
     }
 
     // All agents as nodes
-    const nodes: NodeDatum[] = agents.map(a => {
-      // Preserve existing positions if simulation already ran
-      const existing = simRef.current?.nodes().find(n => n.id === a.agent_id)
-      return {
-        id: a.agent_id,
-        agent: a,
-        x: existing?.x,
-        y: existing?.y,
-        vx: existing?.vx,
-        vy: existing?.vy,
-      }
-    })
+    // DON'T preserve positions - always start fresh so graph reflects current run's connections
+    const nodes: NodeDatum[] = agents.map(a => ({
+      id: a.agent_id,
+      agent: a,
+    }))
     const nodeById = new Map(nodes.map(n => [n.id, n]))
 
     const links: LinkDatum[] = Array.from(edgeMap.values())
@@ -220,6 +218,7 @@ export default function InfluenceGraph({ agents, influences, highlightedAgentId,
     })
 
     return () => sim.stop()
+  // Only redraw when agent count or influence count changes, NOT on individual agent updates
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agents.length, influences.length])
 
@@ -319,7 +318,7 @@ export default function InfluenceGraph({ agents, influences, highlightedAgentId,
           <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
         </svg>
         <span style={{ fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--gray-600)' }}>
-          Customers
+          Customer Network
         </span>
 
         {/* Legend */}
@@ -341,7 +340,36 @@ export default function InfluenceGraph({ agents, influences, highlightedAgentId,
             Customers will appear here when a simulation starts
           </div>
         ) : (
-          <svg ref={svgRef} style={{ width: '100%', height: '100%' }} />
+          <>
+            <svg ref={svgRef} style={{ width: '100%', height: '100%' }} />
+            {/* Info overlay when no influences yet */}
+            {influences.length === 0 && agents.length > 0 && (
+              <div style={{
+                position: 'absolute',
+                bottom: '1rem',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                padding: '0.5rem 1rem',
+                background: 'rgba(255, 255, 255, 0.95)',
+                border: '1px solid var(--gray-200)',
+                borderRadius: 8,
+                boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                fontSize: '0.75rem',
+                color: 'var(--gray-600)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                pointerEvents: 'none',
+              }}>
+                <svg style={{ width: 14, height: 14 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="12" y1="16" x2="12" y2="12"/>
+                  <line x1="12" y1="8" x2="12.01" y2="8"/>
+                </svg>
+                No word-of-mouth connections in this run yet
+              </div>
+            )}
+          </>
         )}
       </div>
 

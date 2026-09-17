@@ -7,6 +7,7 @@ interface Props {
   items: FeedItem[]
   onAgentClick?: (agentId: number | null) => void
   highlightedAgentId?: number | null
+  onPageChange?: (page: number) => void  // NEW: Notify parent when user navigates runs
 }
 
 const BG: Record<string, string> = {
@@ -55,7 +56,7 @@ function splitByRun(items: FeedItem[]): FeedItem[][] {
   return pages
 }
 
-export default function ActivityFeed({ items, onAgentClick, highlightedAgentId }: Props) {
+export default function ActivityFeed({ items, onAgentClick, highlightedAgentId, onPageChange }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const [currentPage, setCurrentPage] = useState(0)
 
@@ -69,6 +70,13 @@ export default function ActivityFeed({ items, onAgentClick, highlightedAgentId }
       setCurrentPage(totalPages - 1)
     }
   }, [totalPages])
+  
+  // Notify parent when page changes
+  useEffect(() => {
+    if (onPageChange) {
+      onPageChange(currentPage)
+    }
+  }, [currentPage, onPageChange])
 
   // Auto-scroll to bottom within current page
   useEffect(() => {

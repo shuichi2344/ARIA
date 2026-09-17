@@ -209,6 +209,7 @@ export function useSim(sessionId: string, profileId?: string) {
     setActiveTabId(LIVE_TAB_ID)
     setMonteCarloState(null)
     monteCarloRef.current = null
+    setCompletedSims([])  // Clear all previous run tabs
 
     setStatus('running')
     setScenarioName(scenario.scenario_name)
@@ -333,11 +334,46 @@ export function useSim(sessionId: string, profileId?: string) {
 
       es.addEventListener('monte_carlo_run_start', e => {
         const d = JSON.parse((e as MessageEvent).data)
+        
+        // Snapshot the PREVIOUS run before starting a new one (but skip for run 1)
+        if (d.run_number > 1) {
+          const prevRunId = `${simIdRef.current}_run_${d.run_number - 1}`
+          
+          // IMPORTANT: Capture current state BEFORE any clearing happens
+          const prevAgents = [...agentsRef.current]
+          const prevFeed = [...feedRef.current]
+          const prevInfluences = [...influencesRef.current]
+          const prevMetrics = metricsRef.current
+          
+          setCompletedSims(prev => {
+            // Check if this run is already saved (to prevent duplicates)
+            if (prev.some(s => s.id === prevRunId)) return prev
+            
+            const snap: CompletedSim = {
+              id:           prevRunId,
+              scenarioName: `${scenarioNameRef.current} (Run ${d.run_number - 1})`,
+              scenarioType: scenarioTypeRef.current,
+              metrics:      prevMetrics,
+              agents:       prevAgents,
+              feed:         prevFeed,
+              influences:   prevInfluences,  // Use captured state, not ref
+              report:       null,
+            }
+            console.log(`📸 Saved Run ${d.run_number - 1} with ${prevInfluences.length} influences`)
+            return [...prev, snap]
+          })
+        }
+        
         setMonteCarloState(prev => {
           const next = prev ? { ...prev, current_run: d.run_number } : prev
           monteCarloRef.current = next
           return next
         })
+        
+        // NOW clear influence edges for the new run
+        console.log(`🧹 Clearing influences for Run ${d.run_number}`)
+        setInfluences([])
+        influencesRef.current = []
         addFeed('system', `<span style="font-weight:700;color:var(--accent)">━━━ Run ${d.run_number} of ${d.max_runs} ━━━</span>`)
         setLoadingMessage(`Running simulation ${d.run_number} of ${d.max_runs}…`)
       })
@@ -385,21 +421,71 @@ export function useSim(sessionId: string, profileId?: string) {
         addFeed('system', `Simulation complete! ${d.summary || ''}`)
         es.close()
 
-        // Snapshot the completed simulation for the tab bar
+        // Snapshot the FINAL run (if Monte Carlo, this is the last run; otherwise it's the only run)
         const completedId = simIdRef.current || data.simulation_id
-        setCompletedSims(() => {
-          const snap: CompletedSim = {
+        const mcState = monteCarloRef.current
+        const isMonteCarlo = mcState && mcState.max_runs > 1
+        
+        setCompletedSims(prev => {
+          // If this was a multi-run simulation, add the last run snapshot
+          if (isMonteCarlo && mcState) {
+            const lastRunId = `${completedId}_run_${mcState.current_run}`
+            
+            // Capture LAST run state before adding summary
+            const lastRunAgents = [...agentsRef.current]
+            const lastRunFeed = [...feedRef.current]
+            const lastRunInfluences = [...influencesRef.current]
+            const lastRunMetrics = metricsRef.current
+            
+            // Check if already saved
+            if (!prev.some(s => s.id === lastRunId)) {
+              const lastRunSnap: CompletedSim = {
+                id:           lastRunId,
+                scenarioName: `${scenarioNameRef.current} (Run ${mcState.current_run})`,
+                scenarioType: scenarioTypeRef.current,
+                metrics:      lastRunMetrics,
+                agents:       lastRunAgents,
+                feed:         lastRunFeed,
+                influences:   lastRunInfluences,
+                report:       null,
+              }
+              console.log(`📸 Saved final Run ${mcState.current_run} with ${lastRunInfluences.length} influences`)
+              prev = [...prev, lastRunSnap]
+            }
+          }
+          
+          // For Monte Carlo, extract averaged metrics from the report
+          // For single run, use current state
+          let finalMetrics = metricsRef.current
+          if (isMonteCarlo && d.report?.risk_summary) {
+            // Use averaged metrics from backend report
+            const rs = d.report.risk_summary
+            finalMetrics = {
+              total_visits: Math.round(rs.visit_rate * rs.total_agents / 100),
+              total_skips: rs.total_agents - Math.round(rs.visit_rate * rs.total_agents / 100) - Math.round(rs.churn_rate * rs.total_agents / 100),
+              total_churned: Math.round(rs.churn_rate * rs.total_agents / 100),
+              total_revenue: rs.estimated_revenue,
+              active_agents: rs.total_agents - Math.round(rs.churn_rate * rs.total_agents / 100),
+            }
+          }
+          
+          // Add the final aggregate snapshot (with the report and averaged metrics)
+          const finalSnap: CompletedSim = {
             id:           completedId,
-            scenarioName: scenarioNameRef.current,
+            scenarioName: isMonteCarlo 
+              ? `${scenarioNameRef.current} (Summary)` 
+              : scenarioNameRef.current,
             scenarioType: scenarioTypeRef.current,
-            metrics:      metricsRef.current,
+            metrics:      finalMetrics,
             agents:       agentsRef.current,
             feed:         feedRef.current,
-            influences:   influencesRef.current,
+            influences:   isMonteCarlo ? [] : influencesRef.current,  // No influences for aggregated summary
             report:       d.report,
           }
-          // Always keep only one completed sim per chat session
-          return [snap]
+          
+          // If not Monte Carlo, replace everything with just this one sim
+          // If Monte Carlo, append the final summary to the list of runs
+          return isMonteCarlo ? [...prev, finalSnap] : [finalSnap]
         })
         setActiveTabId(completedId)
 
@@ -523,6 +609,17 @@ export function useSim(sessionId: string, profileId?: string) {
     setLoadingMessage('Starting simulation…')
     simStartTimeRef.current = null
   }, [])
+  
+  const terminate = useCallback(() => {
+    // Terminate the running simulation gracefully
+    if (simIdRef.current) {
+      fetch(`${API_BASE}/api/simulation/${simIdRef.current}/cancel`, { method: 'POST' }).catch(() => {})
+    }
+    if (esRef.current) { esRef.current.close(); esRef.current = null }
+    setStatus('idle')
+    addFeed('system', '⛔ Simulation terminated by user')
+    simIdRef.current = null
+  }, [])
 
   // Resume viewing the live/current simulation (after viewing history)
   const resumeLive = useCallback(() => {
@@ -550,7 +647,7 @@ export function useSim(sessionId: string, profileId?: string) {
     status, agents, metrics, currentWeek,
     isPaused, feed, scenarioName, liveScenarioName, influences,
     history, restoreSnapshot, deleteSnapshot,
-    launch, togglePause, reset, resumeLive,
+    launch, togglePause, reset, resumeLive, terminate,
     restoredReport, restoredDescription, isRestoredFromHistory,
     completedSims, activeTabId, setActiveTabId,
     monteCarloState,

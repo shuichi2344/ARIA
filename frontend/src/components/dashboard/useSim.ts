@@ -616,9 +616,39 @@ export function useSim(sessionId: string, profileId?: string) {
       fetch(`${API_BASE}/api/simulation/${simIdRef.current}/cancel`, { method: 'POST' }).catch(() => {})
     }
     if (esRef.current) { esRef.current.close(); esRef.current = null }
-    setStatus('idle')
-    addFeed('system', '⛔ Simulation terminated by user')
+    
+    // Clear chat via global function
+    if ((window as any).__ariaNewChat) {
+      (window as any).__ariaNewChat()
+    }
+    
+    // Clear everything and reset to fresh state
     simIdRef.current = null
+    setStatus('idle')
+    setAgents([])
+    setMetrics(null)
+    setCurrentWeek(0)
+    setIsPaused(false)
+    setFeed([])
+    setScenarioName('')
+    setLiveScenarioName('')
+    setInfluences([])
+    setRestoredReport(null)
+    setRestoredDescription('')
+    setIsRestoredFromHistory(false)
+    setCompletedSims([])
+    setActiveTabId(null)
+    setMonteCarloState(null)
+    monteCarloRef.current = null
+    liveStateSnapshotRef.current = null
+    feedRef.current = []
+    agentsRef.current = []
+    influencesRef.current = []
+    metricsRef.current = null
+    scenarioNameRef.current = ''
+    scenarioTypeRef.current = ''
+    setLoadingMessage('Starting simulation…')
+    simStartTimeRef.current = null
   }, [])
 
   // Resume viewing the live/current simulation (after viewing history)

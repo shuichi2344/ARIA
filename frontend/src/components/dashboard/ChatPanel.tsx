@@ -132,6 +132,8 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [lastFailedQuery, setLastFailedQuery] = useState<string | null>(null)
   const [simulationRanInSession, setSimulationRanInSession] = useState(false)
+  const [lastUserQuestion, setLastUserQuestion] = useState<string | null>(null)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const feedRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const latestReportRef = useRef<any>(null)
@@ -409,6 +411,8 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
       setLoading(false)
       setLastFailedQuery(null)
       setSimulationRanInSession(false)
+      setLastUserQuestion(null)
+      setIsRefreshing(false)
       // Reset simulation dashboard
       if (onReset) onReset()
     }
@@ -622,6 +626,8 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
     
     // Mark that user has started conversation
     setHasStartedConversation(true)
+    // Store the question for potential refresh
+    setLastUserQuestion(text)
 
     try {
       console.log('[ChatPanel] Sending request to:', `${API_BASE}/api/simulation/suggest`)
@@ -688,6 +694,82 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
       ])
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function handleRefreshScenarios() {
+    if (!lastUserQuestion || isRefreshing || loading) return
+    
+    setIsRefreshing(true)
+    setScenarios([])
+    
+    // Show refreshing message
+    setMessages(p => [...p, { id: generateMsgId(), role: 'typing' }])
+    
+    // Abort any pending request
+    if (abortRef.current) abortRef.current.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+
+    try {
+      const res = await fetch(`${API_BASE}/api/simulation/suggest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_question: lastUserQuestion,
+          business_profile: profile || { business_name: 'Unknown', business_type: 'Unknown' },
+          use_external_context: useRealWorldContext,
+          chat_session_id: chatSessionRef.current,
+        }),
+        signal: controller.signal,
+      })
+
+      // Handle irrelevant / off-topic input (422)
+      if (res.status === 422) {
+        const errData = await res.json().catch(() => ({}))
+        const detail = errData?.detail || {}
+        const message = detail?.message || "Your question doesn't seem related to business simulation."
+        const suggestion = detail?.suggestion || "Try asking about pricing, competitors, promotions, or any decision that affects your customers."
+        setMessages(p => [
+          ...p.filter(m => m.role !== 'typing'),
+          { id: generateMsgId(), role: 'aria', text: `⚠️ ${message}`, hint: suggestion },
+        ])
+        persistMessage('aria', message)
+        return
+      }
+
+      if (!res.ok) throw new Error('Suggestion failed')
+      const data = await res.json()
+
+      // Remove typing indicator and display new scenarios
+      setMessages(p => p.filter(m => m.role !== 'typing'))
+      
+      if (!data.scenarios || data.scenarios.length === 0) {
+        setLastFailedQuery(lastUserQuestion)
+        const ariaText = data.analysis || "I had trouble generating scenarios for that question."
+        setMessages(p => [
+          ...p,
+          { id: generateMsgId(), role: 'aria', text: ariaText, hint: "The AI response couldn't be processed. You can try refreshing again or rephrase your question." },
+        ])
+        persistMessage('aria', ariaText)
+      } else {
+        setLastFailedQuery(null)
+        setScenarios(data.scenarios || [])
+        // Add a subtle notification that scenarios were refreshed
+        setMessages(p => [
+          ...p,
+          { id: generateMsgId(), role: 'aria', text: '✨ Generated new scenarios based on your question', hint: data.recommended_action },
+        ])
+        persistMessage('aria', 'Scenarios refreshed', { scenarios: data.scenarios })
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      setMessages(p => [
+        ...p.filter(m => m.role !== 'typing'),
+        { id: generateMsgId(), role: 'aria', text: "I couldn't refresh the scenarios right now.", hint: 'Please try again.' },
+      ])
+    } finally {
+      setIsRefreshing(false)
     }
   }
 
@@ -1130,13 +1212,66 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
           maxHeight: '45%',   /* never eat more than 45% of the panel */
           overflowY: 'auto',
         }}>
-          <p style={{
-            margin: 0, fontSize: '0.72rem', fontWeight: 600,
-            color: 'var(--gray-500)', textTransform: 'uppercase',
-            letterSpacing: '0.05em', flexShrink: 0,
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            flexShrink: 0,
           }}>
-            Choose a scenario
-          </p>
+            <p style={{
+              margin: 0, fontSize: '0.72rem', fontWeight: 600,
+              color: 'var(--gray-500)', textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+            }}>
+              Choose a scenario
+            </p>
+            <button
+              type="button"
+              onClick={handleRefreshScenarios}
+              disabled={isRefreshing || loading}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '0.3rem',
+                padding: '0.3rem 0.6rem',
+                background: isRefreshing ? 'var(--gray-100)' : 'transparent',
+                border: '1px solid var(--gray-200)',
+                borderRadius: 6,
+                fontSize: '0.7rem',
+                fontWeight: 500,
+                color: isRefreshing ? 'var(--gray-400)' : 'var(--gray-600)',
+                cursor: isRefreshing || loading ? 'not-allowed' : 'pointer',
+                transition: 'all 0.15s',
+                opacity: isRefreshing || loading ? 0.6 : 1,
+              }}
+              onMouseEnter={e => {
+                if (!isRefreshing && !loading) {
+                  e.currentTarget.style.background = 'var(--gray-50)'
+                  e.currentTarget.style.borderColor = 'var(--gray-300)'
+                }
+              }}
+              onMouseLeave={e => {
+                if (!isRefreshing && !loading) {
+                  e.currentTarget.style.background = 'transparent'
+                  e.currentTarget.style.borderColor = 'var(--gray-200)'
+                }
+              }}
+              title="Generate new scenarios based on your question"
+            >
+              <svg 
+                style={{ 
+                  width: 12, 
+                  height: 12,
+                  animation: isRefreshing ? 'spin 1s linear infinite' : 'none',
+                }} 
+                viewBox="0 0 24 24" 
+                fill="none" 
+                stroke="currentColor" 
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+              </svg>
+              {isRefreshing ? 'Refreshing...' : 'Refresh'}
+            </button>
+          </div>
           {scenarios.slice(0, 4).map((s, i) => (
             <ScenarioChip key={i} scenario={s} onClick={() => handleChip(s)} />
           ))}
@@ -1416,6 +1551,11 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
         @keyframes typing-bounce {
           0%, 80%, 100% { transform: translateY(0); }
           40% { transform: translateY(-6px); }
+        }
+        
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
         }
         
         /* Custom scrollbar for horizontal scroll */

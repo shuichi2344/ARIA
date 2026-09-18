@@ -104,10 +104,19 @@ export function useSim(sessionId: string, profileId?: string) {
   const [restoredReport, setRestoredReport] = useState<SimReport | null>(null)
   const [restoredDescription, setRestoredDescription] = useState<string>('')
   const [isRestoredFromHistory, setIsRestoredFromHistory] = useState(false)
+  const isRestoredFromHistoryRef = useRef(false)
+  
+  // Keep ref in sync with state
+  useEffect(() => {
+    isRestoredFromHistoryRef.current = isRestoredFromHistory
+  }, [isRestoredFromHistory])
 
   // Monte Carlo state
   const [monteCarloState, setMonteCarloState] = useState<MonteCarloState | null>(null)
   const monteCarloRef = useRef<MonteCarloState | null>(null)
+  
+  // Helper to check if viewing history (accessible in event handlers)
+  const getIsRestoredFromHistory = () => isRestoredFromHistoryRef.current
 
   // Plain-English loading message for the simplified loading screen
   const [loadingMessage, setLoadingMessage] = useState<string>('Starting simulation…')
@@ -137,6 +146,7 @@ export function useSim(sessionId: string, profileId?: string) {
   const metricsRef    = useRef<WeekSummary | null>(null)
   const scenarioNameRef = useRef('')
   const scenarioTypeRef = useRef('')
+  const statusRef = useRef<SimStatus>('idle')  // Track actual status (continues in background)
 
   // Snapshot of live state saved before viewing history (to restore on resumeLive)
   const liveStateSnapshotRef = useRef<{
@@ -160,11 +170,14 @@ export function useSim(sessionId: string, profileId?: string) {
   }, [])
 
   function addFeed(type: FeedItem['type'], html: string, agentId?: number) {
-    setFeed(prev => {
-      const next = [...prev, { id: feedCounter++, type, html, agentId }]
-      feedRef.current = next
-      return next
-    })
+    // ALWAYS update feedRef (background state continues regardless of viewing history)
+    const newItem = { id: feedCounter++, type, html, agentId }
+    feedRef.current = [...feedRef.current, newItem]
+    
+    // Only update visual state if not viewing history
+    if (!getIsRestoredFromHistory()) {
+      setFeed(feedRef.current)
+    }
   }
 
   function updateAgentDecision(event: {
@@ -172,15 +185,17 @@ export function useSim(sessionId: string, profileId?: string) {
     decision: string
     reasoning: string
   }) {
-    setAgents(prev => {
-      const next = prev.map(a =>
-        a.agent_id === event.agent_id
-          ? { ...a, last_decision: event.decision, reasoning: event.reasoning, is_active: event.decision !== 'churn' }
-          : a
-      )
-      agentsRef.current = next
-      return next
-    })
+    const viewingHistory = getIsRestoredFromHistory()
+    // Always update ref
+    agentsRef.current = agentsRef.current.map(a =>
+      a.agent_id === event.agent_id
+        ? { ...a, last_decision: event.decision, reasoning: event.reasoning, is_active: event.decision !== 'churn' }
+        : a
+    )
+    // Only update state if not viewing history
+    if (!viewingHistory) {
+      setAgents(agentsRef.current)
+    }
   }
 
   const launch = useCallback(async (scenario: Scenario, agentCount: number = 25, options?: { income_constraints?: string[] | null; age_constraints?: string[] | null; target_customer_constraints?: string[] | null; business_size_constraints?: string[] | null; b2b_percentage?: number | null; chat_session_id?: string | null }) => {
@@ -206,12 +221,15 @@ export function useSim(sessionId: string, profileId?: string) {
     setRestoredReport(null)
     setRestoredDescription('')
     setIsRestoredFromHistory(false)
+    isRestoredFromHistoryRef.current = false  // Explicitly reset ref
     setActiveTabId(LIVE_TAB_ID)
     setMonteCarloState(null)
     monteCarloRef.current = null
     setCompletedSims([])  // Clear all previous run tabs
+    liveStateSnapshotRef.current = null  // Clear any history snapshot
 
     setStatus('running')
+    statusRef.current = 'running'
     setScenarioName(scenario.scenario_name)
     setLiveScenarioName(scenario.scenario_name)
     scenarioNameRef.current = scenario.scenario_name
@@ -255,39 +273,52 @@ export function useSim(sessionId: string, profileId?: string) {
 
       es.addEventListener('week_start', e => {
         const d = JSON.parse((e as MessageEvent).data)
-        setCurrentWeek(d.week)
+        if (!getIsRestoredFromHistory()) {
+          setCurrentWeek(d.week)
+        }
       })
       es.addEventListener('agent_profile_ready', e => {
         const d = JSON.parse((e as MessageEvent).data)
-        setAgents(prev => {
-          const next = prev.map(a =>
-            a.agent_id === d.agent_id
-              ? { ...a, profile_text: d.profile_text, personality: d.profile_text }
-              : a
-          )
-          agentsRef.current = next
-          return next
-        })
-        setLoadingMessage('Building customer personalities…')
+        const viewingHistory = getIsRestoredFromHistory()
+        // Always update ref
+        agentsRef.current = agentsRef.current.map(a =>
+          a.agent_id === d.agent_id
+            ? { ...a, profile_text: d.profile_text, personality: d.profile_text }
+            : a
+        )
+        // Only update state if not viewing history
+        if (!viewingHistory) {
+          setAgents(agentsRef.current)
+          setLoadingMessage('Building customer personalities…')
+        }
       })
       es.addEventListener('profile_generation_complete', () => {
         addFeed('system', `✅ All agent personalities generated. Starting simulation...`)
-        setLoadingMessage('All customers ready — starting decisions…')
+        if (!getIsRestoredFromHistory()) {
+          setLoadingMessage('All customers ready — starting decisions…')
+        }
       })
       es.addEventListener('agent_decision', e => {
         const d = JSON.parse((e as MessageEvent).data)
         updateAgentDecision(d)
+        const viewingHistory = getIsRestoredFromHistory()
         const verb = d.decision === 'visit' ? 'visited 🟢'
                    : d.decision === 'churn' ? 'churned 🔴' : 'skipped 🟡'
         addFeed(d.decision as FeedItem['type'],
           `<strong>Customer ${d.agent_id}</strong> ${verb}<span class="reasoning">${esc(d.reasoning || '')}</span>`, d.agent_id)
-        setLoadingMessage('Customers are making decisions…')
+        if (!viewingHistory) {
+          setLoadingMessage('Customers are making decisions…')
+        }
       })
       es.addEventListener('peer_influence', e => {
         const d = JSON.parse((e as MessageEvent).data) as InfluenceEdge
-        setInfluences(prev => { const next = [...prev, d]; influencesRef.current = next; return next })
+        const viewingHistory = getIsRestoredFromHistory()
+        influencesRef.current = [...influencesRef.current, d]
         addFeed('system', `🗣️ <strong>Customer ${d.from_agent_id}</strong> influenced <strong>Customer ${d.to_agent_id}</strong> via word-of-mouth`, d.to_agent_id)
-        setLoadingMessage('Customers are talking to each other…')
+        if (!viewingHistory) {
+          setInfluences(prev => [...prev, d])
+          setLoadingMessage('Customers are talking to each other…')
+        }
       })
       es.addEventListener('peer_evaluation', e => {
         const d = JSON.parse((e as MessageEvent).data) as {
@@ -310,13 +341,18 @@ export function useSim(sessionId: string, profileId?: string) {
       })
       es.addEventListener('week_summary', e => {
         const d = JSON.parse((e as MessageEvent).data)
-        setMetrics(d); metricsRef.current = d
-        setCurrentWeek(d.week)
+        const viewingHistory = getIsRestoredFromHistory()
+        metricsRef.current = d
+        if (!viewingHistory) {
+          setMetrics(d)
+          setCurrentWeek(d.week)
+        }
       })
 
       // Monte Carlo events
       es.addEventListener('monte_carlo_start', e => {
         const d = JSON.parse((e as MessageEvent).data)
+        const viewingHistory = getIsRestoredFromHistory()
         const mcState: MonteCarloState = {
           current_run: 0,
           max_runs: d.max_runs,
@@ -326,17 +362,22 @@ export function useSim(sessionId: string, profileId?: string) {
           converged: false,
           completed: false,
         }
-        setMonteCarloState(mcState)
         monteCarloRef.current = mcState
         addFeed('system', `🔁 <strong>Running multiple times for accuracy</strong> — running this scenario ${d.min_runs}-${d.max_runs} times to make sure results are reliable`)
-        setLoadingMessage(`Running simulation ${d.min_runs}–${d.max_runs} times for reliable results…`)
+        if (!viewingHistory) {
+          setMonteCarloState(mcState)
+          setLoadingMessage(`Running simulation ${d.min_runs}–${d.max_runs} times for reliable results…`)
+        }
       })
 
       es.addEventListener('monte_carlo_run_start', e => {
         const d = JSON.parse((e as MessageEvent).data)
         
-        // Snapshot the PREVIOUS run before starting a new one (but skip for run 1)
-        if (d.run_number > 1) {
+        // Don't update live state visually if user is viewing history
+        const viewingHistory = getIsRestoredFromHistory()
+        
+        // Snapshot the PREVIOUS run before starting a new one (but skip for run 1 and when viewing history)
+        if (d.run_number > 1 && !viewingHistory) {
           const prevRunId = `${simIdRef.current}_run_${d.run_number - 1}`
           
           // IMPORTANT: Capture current state BEFORE any clearing happens
@@ -364,68 +405,76 @@ export function useSim(sessionId: string, profileId?: string) {
           })
         }
         
-        setMonteCarloState(prev => {
-          const next = prev ? { ...prev, current_run: d.run_number } : prev
-          monteCarloRef.current = next
-          return next
-        })
+        monteCarloRef.current = monteCarloRef.current ? { ...monteCarloRef.current, current_run: d.run_number } : monteCarloRef.current
+        if (!viewingHistory) {
+          setMonteCarloState(prev => prev ? { ...prev, current_run: d.run_number } : prev)
+        }
         
-        // NOW clear influence edges for the new run
+        // NOW clear influence edges for the new run (only update refs, not state if viewing history)
         console.log(`🧹 Clearing influences for Run ${d.run_number}`)
-        setInfluences([])
         influencesRef.current = []
+        if (!viewingHistory) {
+          setInfluences([])
+        }
+        
+        // Add feed divider for ALL runs (addFeed handles history internally)
         addFeed('system', `<span style="font-weight:700;color:var(--accent)">━━━ Run ${d.run_number} of ${d.max_runs} ━━━</span>`)
-        setLoadingMessage(`Running simulation ${d.run_number} of ${d.max_runs}…`)
+        
+        if (!viewingHistory) {
+          setLoadingMessage(`Running simulation ${d.run_number} of ${d.max_runs}…`)
+        }
       })
 
       es.addEventListener('monte_carlo_progress', e => {
         const d = JSON.parse((e as MessageEvent).data)
-        setMonteCarloState(prev => {
-          const next = prev ? {
-            ...prev,
-            current_run: d.run_number,
-            wci_cv: d.wci_cv,
-            converged: d.converged,
-          } : prev
-          monteCarloRef.current = next
-          return next
-        })
+        const viewingHistory = getIsRestoredFromHistory()
+        const next = monteCarloRef.current ? {
+          ...monteCarloRef.current,
+          current_run: d.run_number,
+          wci_cv: d.wci_cv,
+          converged: d.converged,
+        } : monteCarloRef.current
+        monteCarloRef.current = next
+        if (!viewingHistory) {
+          setMonteCarloState(next)
+        }
       })
 
       es.addEventListener('monte_carlo_complete', e => {
         const d = JSON.parse((e as MessageEvent).data)
-        setMonteCarloState(prev => {
-          const next = prev ? {
-            ...prev,
-            completed: true,
-            converged: d.converged,
-            current_run: d.total_runs,
-            wci_cv: d.wci_cv,
-          } : prev
-          monteCarloRef.current = next
-          return next
-        })
+        const viewingHistory = getIsRestoredFromHistory()
+        const next = monteCarloRef.current ? {
+          ...monteCarloRef.current,
+          completed: true,
+          converged: d.converged,
+          current_run: d.total_runs,
+          wci_cv: d.wci_cv,
+        } : monteCarloRef.current
+        monteCarloRef.current = next
         addFeed('system', d.converged
           ? `✅ <strong>Results are reliable</strong> — got consistent outcomes after ${d.total_runs} runs`
           : `⚠️ <strong>Results may vary</strong> — completed ${d.total_runs} runs but outcomes weren't fully consistent`
         )
-        setLoadingMessage(d.converged
-          ? `All ${d.total_runs} runs complete — results are consistent`
-          : `All ${d.total_runs} runs complete — wrapping up…`
-        )
+        if (!viewingHistory) {
+          setMonteCarloState(next)
+          setLoadingMessage(d.converged
+            ? `All ${d.total_runs} runs complete — results are consistent`
+            : `All ${d.total_runs} runs complete — wrapping up…`
+          )
+        }
       })
 
       es.addEventListener('simulation_complete', e => {
         const d = JSON.parse((e as MessageEvent).data)
-        setStatus('done')
+        const viewingHistory = getIsRestoredFromHistory()
+        
         addFeed('system', `Simulation complete! ${d.summary || ''}`)
-        es.close()
-
-        // Snapshot the FINAL run (if Monte Carlo, this is the last run; otherwise it's the only run)
+        
         const completedId = simIdRef.current || data.simulation_id
         const mcState = monteCarloRef.current
         const isMonteCarlo = mcState && mcState.max_runs > 1
         
+        // ALWAYS update completedSims (background state) regardless of viewing history
         setCompletedSims(prev => {
           // If this was a multi-run simulation, add the last run snapshot
           if (isMonteCarlo && mcState) {
@@ -461,11 +510,11 @@ export function useSim(sessionId: string, profileId?: string) {
             // Use averaged metrics from backend report
             const rs = d.report.risk_summary
             finalMetrics = {
+              week: 1,
               total_visits: Math.round(rs.visit_rate * rs.total_agents / 100),
-              total_skips: rs.total_agents - Math.round(rs.visit_rate * rs.total_agents / 100) - Math.round(rs.churn_rate * rs.total_agents / 100),
-              total_churned: Math.round(rs.churn_rate * rs.total_agents / 100),
               total_revenue: rs.estimated_revenue,
               active_agents: rs.total_agents - Math.round(rs.churn_rate * rs.total_agents / 100),
+              churned_agents: Math.round(rs.churn_rate * rs.total_agents / 100),
             }
           }
           
@@ -487,9 +536,18 @@ export function useSim(sessionId: string, profileId?: string) {
           // If Monte Carlo, append the final summary to the list of runs
           return isMonteCarlo ? [...prev, finalSnap] : [finalSnap]
         })
-        setActiveTabId(completedId)
+        
+        // Only update visual state if not viewing history
+        if (!viewingHistory) {
+          setStatus('done')
+          setActiveTabId(completedId)
+        }
+        // ALWAYS update statusRef (background state)
+        statusRef.current = 'done'
+        
+        es.close()
 
-        // Pass report to chat via global callback
+        // ALWAYS pass report to chat (even when viewing history)
         if ((window as any).__ariaAddCompletionMessage) {
           ;(window as any).__ariaAddCompletionMessage(d.summary, d.report)
         }
@@ -511,11 +569,13 @@ export function useSim(sessionId: string, profileId?: string) {
         es.close()
         esRef.current = null
         setStatus('idle')
+        statusRef.current = 'idle'
         addFeed('system', 'Simulation stream disconnected.')
       })
 
     } catch (err: unknown) {
       setStatus('idle')
+      statusRef.current = 'idle'
       addFeed('system', `Error: ${err instanceof Error ? err.message : String(err)}`)
     }
   }, [sessionId, profileId])
@@ -524,7 +584,9 @@ export function useSim(sessionId: string, profileId?: string) {
     if (!simIdRef.current) return
     const next = !isPaused
     setIsPaused(next)
-    setStatus(next ? 'paused' : 'running')
+    const newStatus = next ? 'paused' : 'running'
+    setStatus(newStatus)
+    statusRef.current = newStatus
     fetch(`${API_BASE}/api/simulation/${simIdRef.current}/${next ? 'pause' : 'resume'}`, { method: 'POST' }).catch(() => {})
   }, [isPaused])
 
@@ -539,15 +601,9 @@ export function useSim(sessionId: string, profileId?: string) {
       setStatus('done')
     }
     
-    // Save live refs before overwriting (so resumeLive can restore them)
-    if (!liveStateSnapshotRef.current) {
-      liveStateSnapshotRef.current = {
-        agents:     agentsRef.current,
-        feed:       feedRef.current,
-        influences: influencesRef.current,
-        metrics:    metricsRef.current,
-      }
-    }
+    // IMPORTANT: DO NOT overwrite refs — they must continue tracking live simulation
+    // Only update visual state to show historical data
+    // The refs (agentsRef, feedRef, influencesRef, metricsRef) continue accumulating live data in background
     
     // Store the viewed snapshot for display (this overlays the live sim panel)
     setScenarioName(snap.scenarioName)
@@ -563,10 +619,8 @@ export function useSim(sessionId: string, profileId?: string) {
     setCompletedSims([])
     setActiveTabId(null)
     // Don't null out monteCarloState — it's preserved in monteCarloRef for resumeLive
-    agentsRef.current     = snap.agents
-    feedRef.current       = snap.feed
-    influencesRef.current = snap.influences
-    metricsRef.current    = snap.finalMetrics
+    // Don't overwrite refs — they continue tracking live state:
+    // agentsRef.current, feedRef.current, influencesRef.current, metricsRef.current stay unchanged
   }, [status])
 
   const deleteSnapshot = useCallback((id: string) => {
@@ -584,6 +638,7 @@ export function useSim(sessionId: string, profileId?: string) {
     if (esRef.current) { esRef.current.close(); esRef.current = null }
     simIdRef.current = null
     setStatus('idle')
+    statusRef.current = 'idle'
     setAgents([])
     setMetrics(null)
     setCurrentWeek(0)
@@ -625,6 +680,7 @@ export function useSim(sessionId: string, profileId?: string) {
     // Clear everything and reset to fresh state
     simIdRef.current = null
     setStatus('idle')
+    statusRef.current = 'idle'
     setAgents([])
     setMetrics(null)
     setCurrentWeek(0)
@@ -653,24 +709,21 @@ export function useSim(sessionId: string, profileId?: string) {
 
   // Resume viewing the live/current simulation (after viewing history)
   const resumeLive = useCallback(() => {
-    // Restore live state from saved snapshot (not from the overwritten refs)
-    if (liveStateSnapshotRef.current) {
-      agentsRef.current     = liveStateSnapshotRef.current.agents
-      feedRef.current       = liveStateSnapshotRef.current.feed
-      influencesRef.current = liveStateSnapshotRef.current.influences
-      metricsRef.current    = liveStateSnapshotRef.current.metrics
-      liveStateSnapshotRef.current = null
-    }
+    // When resuming live view, use the current refs (which have continued updating in background)
+    // NOT the snapshot (which is from when we switched to history)
+    // This ensures we see all accumulated data including new runs that happened while viewing history
     setAgents(agentsRef.current)
-    setFeed(feedRef.current)
+    setFeed(feedRef.current)  // Use current feed, not snapshot (includes all runs that happened while viewing history)
     setMetrics(metricsRef.current)
     setInfluences(influencesRef.current)
     setScenarioName(scenarioNameRef.current)
+    setStatus(statusRef.current)  // Restore actual status (may be 'done' if sim completed while viewing history)
     setRestoredReport(null)
     setRestoredDescription('')
     setIsRestoredFromHistory(false)
     setActiveTabId(LIVE_TAB_ID)
     setMonteCarloState(monteCarloRef.current)  // restore live MC state from ref
+    liveStateSnapshotRef.current = null  // clear snapshot
   }, [])
 
   return {

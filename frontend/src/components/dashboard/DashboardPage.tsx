@@ -83,13 +83,20 @@ export default function DashboardPage({ session }: Props) {
         setCompletedDescription(last.scenarioName || '')
       }
     }
-    // Clear when a new sim starts or state resets
-    if (sim.status === 'idle' || sim.status === 'running') {
+    // When a new sim starts, hide thought process and clear report
+    if (sim.status === 'running' && sim.agents.length === 0) {
+      // Brand new simulation starting
+      setShowThoughtProcess(false)
+      showThoughtProcessRef.current = false
       setCompletedReport(null)
       setCompletedDescription('')
-      // DON'T reset showThoughtProcess - user's preference should persist
     }
-  }, [sim.status, sim.completedSims, sim.isRestoredFromHistory])
+    // Clear report when state resets to idle
+    if (sim.status === 'idle') {
+      setCompletedReport(null)
+      setCompletedDescription('')
+    }
+  }, [sim.status, sim.completedSims, sim.isRestoredFromHistory, sim.agents.length])
 
   function handleLogout() {
     logout()
@@ -264,11 +271,11 @@ export default function DashboardPage({ session }: Props) {
           }}>
             <span style={{
               width: 8, height: 8, borderRadius: '50%',
-              background: STATUS_DOT[sim.status] || 'var(--gray-400)',
+              background: sim.isRestoredFromHistory ? 'var(--accent)' : (STATUS_DOT[sim.status] || 'var(--gray-400)'),
               display: 'inline-block',
-              animation: sim.status === 'running' ? 'pulse-dot 1.2s infinite' : 'none',
+              animation: (!sim.isRestoredFromHistory && sim.status === 'running') ? 'pulse-dot 1.2s infinite' : 'none',
             }} />
-            {STATUS_LABELS[sim.status] || sim.status}
+            {sim.isRestoredFromHistory ? 'Viewing History' : (STATUS_LABELS[sim.status] || sim.status)}
           </div>
 
           {/* Home */}
@@ -312,7 +319,7 @@ export default function DashboardPage({ session }: Props) {
           onLaunch={sim.launch}
           onSimulationComplete={() => {}}
           onReset={sim.reset}
-          simulationStatus={sim.status}
+          simulationStatus={sim.isRestoredFromHistory ? 'done' : sim.status}
         />
 
         {/* Sim panel */}
@@ -342,6 +349,73 @@ export default function DashboardPage({ session }: Props) {
 
           {/* Active simulation */}
           {(sim.status !== 'idle' || sim.agents.length > 0) && (() => {
+            // CRITICAL: When viewing history, freeze ALL display to historical snapshot
+            // This prevents live simulation updates from triggering re-renders that switch the view
+            if (sim.isRestoredFromHistory) {
+              // Show frozen historical view - ignore all live state
+              const displayMetrics = sim.metrics
+              const displayAgents = sim.agents
+              const displayInfluences = sim.influences
+              const displayName = sim.scenarioName
+              const displayFeed = sim.feed
+              const showReportPanel = sim.restoredReport !== null
+              
+              return (
+                <div style={{
+                  flex: 1, display: 'flex', flexDirection: 'column',
+                  overflow: 'hidden', padding: '1rem 1.25rem', gap: '0.75rem',
+                }}>
+                  {/* Top bar */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1, minWidth: 0 }}>
+                      <span style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--gray-900)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {displayName || '—'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Metrics */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '0.6rem', flexShrink: 0 }}>
+                    <MetricCard label="Total visits" value={displayMetrics?.total_visits ?? '—'} />
+                    <MetricCard label="Revenue (RM)" value={displayMetrics ? displayMetrics.total_revenue.toFixed(0) : '—'} tooltip="Estimated from your business price range (or income-based if not set), adjusted by the scenario's price change. Each visiting customer spends a random amount within your price range per visit." />
+                    <MetricCard label="Active customers" value={displayMetrics?.active_agents ?? '—'} />
+                    <MetricCard label="Churned" value={displayMetrics?.churned_agents ?? '—'} danger />
+                  </div>
+
+                  {/* Main area */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: displayFeed.length > 0 && !showReportPanel ? '1fr 260px' : '1fr',
+                    gap: '0.75rem', flex: 1, overflow: 'hidden', minHeight: 0,
+                  }}>
+                    {showReportPanel ? (
+                      <RestoredSummaryPanel
+                        report={sim.restoredReport!}
+                        description={sim.restoredDescription}
+                      />
+                    ) : (
+                      <InfluenceGraph
+                        key={`graph-history-${displayInfluences.length}`}
+                        agents={displayAgents}
+                        influences={displayInfluences}
+                        highlightedAgentId={highlightedAgentId}
+                        onClearHighlight={() => setHighlightedAgentId(null)}
+                      />
+                    )}
+                    {displayFeed.length > 0 && !showReportPanel && (
+                      <ActivityFeed 
+                        items={displayFeed} 
+                        onAgentClick={setHighlightedAgentId} 
+                        highlightedAgentId={highlightedAgentId}
+                        onPageChange={setActivityFeedPage}
+                      />
+                    )}
+                  </div>
+                </div>
+              )
+            }
+            
+            // LIVE simulation view (not viewing history)
             // Determine which run to display based on Activity Feed pagination
             // For Monte Carlo: completedSims has all individual runs + summary at the end
             // ActivityFeed pages correspond to individual runs only
@@ -408,7 +482,7 @@ export default function DashboardPage({ session }: Props) {
                     <MonteCarloBadge mc={sim.monteCarloState} />
                   )}
                 </div>
-                {isRunningLive && !viewingCompletedRun && (sim.status === 'running' || sim.status === 'paused') && (
+                {isRunningLive && !viewingCompletedRun && !sim.isRestoredFromHistory && (sim.status === 'running' || sim.status === 'paused') && (
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <CtrlBtn onClick={sim.togglePause} title={sim.isPaused ? 'Resume' : 'Pause'}>
                       {sim.isPaused
@@ -422,7 +496,7 @@ export default function DashboardPage({ session }: Props) {
               </div>
 
               {/* Loading screen layer — shown while sim is running, hidden when user peeks at thought process */}
-              {isRunningLive && !showThoughtProcess && !showThoughtProcessRef.current && (
+              {isRunningLive && !sim.isRestoredFromHistory && !showThoughtProcess && !showThoughtProcessRef.current && (
                 <SimLoadingScreen
                   scenarioName={displayName}
                   message={sim.loadingMessage}
@@ -440,7 +514,7 @@ export default function DashboardPage({ session }: Props) {
               )}
 
               {/* Thought-process toggle strip — shown when user has peeked inside */}
-              {isRunningLive && (showThoughtProcess || showThoughtProcessRef.current) && (
+              {isRunningLive && !sim.isRestoredFromHistory && (showThoughtProcess || showThoughtProcessRef.current) && (
                 <div style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   padding: '0.45rem 0.75rem',
@@ -450,7 +524,6 @@ export default function DashboardPage({ session }: Props) {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.78rem', color: 'var(--gray-600)' }}>
                     <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#22c55e', display: 'inline-block', animation: 'pulse-dot 1.2s infinite' }} />
                     <span style={{ fontWeight: 600 }}>{sim.loadingMessage}</span>
-                    <span style={{ color: 'var(--gray-400)' }}>· {progressPct}%</span>
                   </div>
                   <button
                     onClick={() => {
@@ -475,19 +548,6 @@ export default function DashboardPage({ session }: Props) {
               {/* Thought-process content / metrics / report — hidden behind loading screen unless revealed */}
               {(!isRunningLive || showThoughtProcess || showThoughtProcessRef.current) && (
                 <>
-                  {/* Progress bar — only while viewing live/latest run and thought process is visible */}
-                  {!viewingCompletedRun && (showThoughtProcess || showThoughtProcessRef.current) && (
-                    <div style={{ height: 6, background: 'var(--gray-200)', borderRadius: 999, overflow: 'hidden', flexShrink: 0 }}>
-                      <div style={{
-                        height: '100%',
-                        background: 'linear-gradient(90deg, var(--accent), var(--accent-light))',
-                        borderRadius: 999,
-                        width: `${progressPct}%`,
-                        transition: 'width 0.5s ease',
-                      }} />
-                    </div>
-                  )}
-
                   {/* Metrics */}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '0.6rem', flexShrink: 0 }}>
                     <MetricCard label="Total visits" value={displayMetrics?.total_visits ?? '—'} />

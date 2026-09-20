@@ -400,7 +400,9 @@ export function useSim(sessionId: string, profileId?: string) {
               influences:   prevInfluences,  // Use captured state, not ref
               report:       null,
             }
-            console.log(`📸 Saved Run ${d.run_number - 1} with ${prevInfluences.length} influences`)
+            if (process.env.NODE_ENV === 'development') {
+              console.log(`📸 Saved Run ${d.run_number - 1} with ${prevInfluences.length} influences`)
+            }
             return [...prev, snap]
           })
         }
@@ -411,7 +413,9 @@ export function useSim(sessionId: string, profileId?: string) {
         }
         
         // NOW clear influence edges for the new run (only update refs, not state if viewing history)
-        console.log(`🧹 Clearing influences for Run ${d.run_number}`)
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`🧹 Clearing influences for Run ${d.run_number}`)
+        }
         influencesRef.current = []
         if (!viewingHistory) {
           setInfluences([])
@@ -498,7 +502,9 @@ export function useSim(sessionId: string, profileId?: string) {
                 influences:   lastRunInfluences,
                 report:       null,
               }
-              console.log(`📸 Saved final Run ${mcState.current_run} with ${lastRunInfluences.length} influences`)
+              if (process.env.NODE_ENV === 'development') {
+                console.log(`📸 Saved final Run ${mcState.current_run} with ${lastRunInfluences.length} influences`)
+              }
               prev = [...prev, lastRunSnap]
             }
           }

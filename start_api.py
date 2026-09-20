@@ -14,6 +14,10 @@ from pathlib import Path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
+# Import settings to check environment
+from aria.config import get_settings
+settings = get_settings()
+
 # Configure logging BEFORE starting uvicorn
 logging.basicConfig(
     level=logging.INFO,
@@ -58,7 +62,7 @@ if __name__ == "__main__":
         "aria.api.main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True,  # Auto-reload on code changes
-        log_level="info",
+        reload=settings.debug,  # Only auto-reload in development
+        log_level="debug" if settings.debug else "info",
         use_colors=True
     )

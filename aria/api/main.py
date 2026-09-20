@@ -71,18 +71,31 @@ app.add_middleware(SecurityHeadersMiddleware)
 # ---------------------------------------------------------------------------
 # CORS: Restrict to known origins only
 # ---------------------------------------------------------------------------
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+settings = get_settings()
+
+# Determine allowed origins based on environment
+if settings.environment == "production":
+    # Production: only allow the deployed frontend
+    allowed_origins = [settings.app_url]
+else:
+    # Development: allow localhost + configured app URL
+    allowed_origins = [
         "http://localhost:8080",   # old vanilla web UI
         "http://127.0.0.1:8080",
         "http://localhost:3000",   # Next.js dev server
         "http://127.0.0.1:3000",
-    ],
+        settings.app_url,
+    ]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
+
+logger.info(f"CORS configured for: {allowed_origins}")
 
 # ---------------------------------------------------------------------------
 # Pydantic models — strict validation, reject unexpected fields (OWASP Input Validation)
@@ -222,7 +235,7 @@ async def health_check():
         "services": {
             "api": "operational",
             "database": "operational" if supabase_healthy else "unavailable",
-            "llm": "operational"  # TODO: Add actual Ollama check
+            "llm": "operational"  # Note: LLM health check not implemented (relies on Ollama/Ilmu AI external services)
         }
     }
 

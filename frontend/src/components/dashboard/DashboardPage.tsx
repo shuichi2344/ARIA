@@ -354,7 +354,13 @@ export default function DashboardPage({ session }: Props) {
               session={session}
               onLogout={handleLogout}
               onEditProfile={() => router.push('/onboarding?edit=1')}
-              onStartTutorial={resetTutorial}
+              onStartTutorial={
+                // Only show tutorial button when at idle state (new chat dashboard)
+                // Hide when simulation is running or viewing history
+                sim.status === 'idle' && !sim.isRestoredFromHistory 
+                  ? resetTutorial 
+                  : undefined
+              }
             />
           </div>
         </div>

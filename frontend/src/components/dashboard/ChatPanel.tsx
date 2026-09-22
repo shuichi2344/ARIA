@@ -87,7 +87,7 @@ interface Props {
   onLaunch: (scenario: Scenario, agentCount?: number, options?: { income_constraints?: string[] | null; age_constraints?: string[] | null; target_customer_constraints?: string[] | null; business_size_constraints?: string[] | null; b2b_percentage?: number | null; chat_session_id?: string | null }) => void
   onSimulationComplete?: (summary: string) => void
   onReset?: () => void
-  simulationStatus?: 'idle' | 'running' | 'paused' | 'done'
+  simulationStatus?: 'idle' | 'running' | 'done'
 }
 
 export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onReset, simulationStatus = 'idle' }: Props) {
@@ -98,6 +98,71 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
   }])
   const [scenarios, setScenarios] = useState<Scenario[]>([])
   const chatSessionRef = useRef<string | null>(null)
+  
+  // Check if tutorial demo scenario should be shown - poll every 500ms
+  useEffect(() => {
+    const checkDemoScenario = () => {
+      const demoScenarioRaw = localStorage.getItem('aria-tutorial-demo-scenario');
+      const isDemoReady = localStorage.getItem('aria-tutorial-demo-ready');
+      
+      if (demoScenarioRaw && isDemoReady && scenarios.length === 0) {
+        try {
+          const demoScenario = JSON.parse(demoScenarioRaw);
+          console.log('[CHATPANEL] Loading demo scenario');
+          setScenarios([demoScenario]);
+          setMessages([{
+            id: generateMsgId(),
+            role: 'aria',
+            text: '👋 Welcome to ARIA! I\'ve prepared a demo scenario for you.',
+            hint: 'Click "Run Simulation" below to see how it works!',
+          }]);
+        } catch (e) {
+          console.error('Failed to load demo scenario:', e);
+        }
+      }
+    };
+    
+    // Listen for tutorial cleanup event
+    const handleTutorialCleanup = () => {
+      // Remove demo scenario if it exists
+      setScenarios(prevScenarios => {
+        const hasDemoScenario = prevScenarios.some(s => s.scenario_name?.includes('Demo:'));
+        if (hasDemoScenario) {
+          // Reset to initial message
+          setMessages([{
+            id: generateMsgId(),
+            role: 'aria',
+            text: "Hi! I'm ARIA. Tell me about a business scenario you'd like to simulate.",
+            hint: 'Try: "What happens if I raise prices by 10%?" or "A new competitor opened nearby."',
+          }]);
+          return [];
+        }
+        return prevScenarios;
+      });
+    };
+    
+    // Listen for tutorial demo ready event
+    const handleTutorialDemoReady = () => {
+      console.log('[CHATPANEL] Tutorial demo ready event received');
+      checkDemoScenario();
+    };
+    
+    // Check immediately
+    checkDemoScenario();
+    
+    // Then poll every 500ms
+    const interval = setInterval(checkDemoScenario, 500);
+    
+    // Listen for events
+    window.addEventListener('tutorial-cleanup', handleTutorialCleanup);
+    window.addEventListener('tutorial-demo-ready', handleTutorialDemoReady);
+    
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('tutorial-cleanup', handleTutorialCleanup);
+      window.removeEventListener('tutorial-demo-ready', handleTutorialDemoReady);
+    };
+  }, [scenarios.length]);
   
   // Fire-and-forget: save message to backend
   function persistMessage(role: 'user' | 'aria', content: string, metadata?: Record<string, unknown>) {
@@ -161,7 +226,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
       }
       return settings
     })
-  }, [])
+  }, [profile?.id])
 
   // Populate userIdRef on mount
   useEffect(() => {
@@ -187,6 +252,13 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
         const pageWidth = 180
         let y = 20
 
+        // Typography constants
+        const FONT_TITLE = 16
+        const FONT_HEADING = 12
+        const FONT_BODY = 10
+        const FONT_SMALL = 8
+        const LINE_SPACING = 5.5  // Compact line spacing
+
         // Helper: add new page when content would overflow
         function checkPage(needed: number) {
           if (y + needed > 280) {
@@ -196,56 +268,64 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
         }
 
         // ── Title ──
-        doc.setFontSize(18)
+        doc.setFontSize(FONT_TITLE)
         doc.setFont('helvetica', 'bold')
         doc.text('ARIA Simulation Report', margin, y)
-        y += 14
+        y += 12
 
         // ── Scenario info ──
-        doc.setFontSize(11)
+        doc.setFontSize(FONT_BODY)
+        doc.setFont('helvetica', 'bold')
+        doc.text(`Scenario: ${report.scenario?.name || 'Unknown'}`, margin, y)
+        y += 7
         doc.setFont('helvetica', 'normal')
-        doc.text(`Scenario: ${report.scenario?.name || 'Unknown'}`, margin, y); y += 7
-        doc.setFontSize(10)
         const descLines: string[] = doc.splitTextToSize(report.scenario?.description || '', pageWidth)
         for (let i = 0; i < descLines.length; i++) {
-          checkPage(6)
+          checkPage(LINE_SPACING)
           doc.text(descLines[i], margin, y)
-          y += 5
+          y += LINE_SPACING
         }
-        y += 10
+        y += 8
 
         // ── Risk Summary ──
         checkPage(50)
-        doc.setFontSize(14)
+        doc.setFontSize(FONT_HEADING)
         doc.setFont('helvetica', 'bold')
-        doc.text('Risk Summary', margin, y); y += 9
-        doc.setFontSize(10)
+        doc.text('Risk Summary', margin, y)
+        y += 9
+        doc.setFontSize(FONT_BODY)
         doc.setFont('helvetica', 'normal')
-        doc.text(`Risk Level: ${risk.risk_level}`, margin + 4, y); y += 6
-        doc.text(`Churn Rate: ${risk.churn_rate}%`, margin + 4, y); y += 6
-        doc.text(`Visit Rate: ${risk.visit_rate}%`, margin + 4, y); y += 6
-        doc.text(`Estimated Revenue: RM${risk.estimated_revenue.toFixed(2)}`, margin + 4, y); y += 6
-        doc.text(`Total Customers: ${risk.total_agents}`, margin + 4, y); y += 8
-        doc.setFontSize(8)
+        doc.text(`Risk Level: ${risk.risk_level}`, margin + 4, y)
+        y += LINE_SPACING
+        doc.text(`Churn Rate: ${risk.churn_rate}%`, margin + 4, y)
+        y += LINE_SPACING
+        doc.text(`Visit Rate: ${risk.visit_rate}%`, margin + 4, y)
+        y += LINE_SPACING
+        doc.text(`Estimated Revenue: RM${risk.estimated_revenue.toFixed(2)}`, margin + 4, y)
+        y += LINE_SPACING
+        doc.text(`Total Customers: ${risk.total_agents}`, margin + 4, y)
+        y += 7
+        doc.setFontSize(FONT_SMALL)
         doc.setTextColor(120)
         const revNote: string[] = doc.splitTextToSize('Note: Revenue is estimated from your business price range, adjusted by the scenario\'s price change. Each visiting customer spends a random amount within your configured price range.', pageWidth)
         for (let i = 0; i < revNote.length; i++) {
           doc.text(revNote[i], margin, y)
-          y += 4
+          y += 4.5
         }
-        y += 4
+        y += 5
         doc.setTextColor(0)
 
         // ── Customer/Personality Breakdown ──
         checkPage(60)
-        doc.setFontSize(14)
+        doc.setFontSize(FONT_HEADING)
         doc.setFont('helvetica', 'bold')
-        doc.text(report.breakdown_type === 'personality' ? 'Personality Breakdown' : 'Customer Breakdown', margin, y); y += 9
-        doc.setFontSize(10)
+        doc.text(report.breakdown_type === 'personality' ? 'Personality Breakdown' : 'Customer Breakdown', margin, y)
+        y += 9
+        doc.setFontSize(FONT_BODY)
         doc.setFont('helvetica', 'normal')
         Object.entries(breakdown).forEach(([level, data]: [string, any]) => {
           doc.text(`${level}: ${data.visit_pct}% visit, ${data.skip_pct}% skip, ${data.churn_pct}% churn`, margin + 4, y)
-          y += 6
+          y += LINE_SPACING
         })
         y += 6
 
@@ -257,7 +337,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
 
         Object.entries(breakdown).forEach(([level, data]: [string, any]) => {
           checkPage(barHeight + 6)
-          doc.setFontSize(9)
+          doc.setFontSize(FONT_BODY)
           doc.setFont('helvetica', 'normal')
           doc.setTextColor(0)
           doc.text(level, margin, y + barHeight / 2 + 1)
@@ -278,8 +358,8 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
         })
 
         // Legend
-        y += 4
-        doc.setFontSize(8)
+        y += 5
+        doc.setFontSize(FONT_SMALL)
         doc.setFont('helvetica', 'normal')
         doc.setFillColor(34, 197, 94); doc.rect(margin, y, 8, 5, 'F')
         doc.setTextColor(0); doc.text('Visit', margin + 10, y + 4)
@@ -287,83 +367,94 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
         doc.text('Skip', margin + 40, y + 4)
         doc.setFillColor(239, 68, 68); doc.rect(margin + 60, y, 8, 5, 'F')
         doc.text('Churn', margin + 70, y + 4)
-        y += 14
+        y += 12
 
         // ── Analysis ──
         const analysis = report.analysis || ''
         if (analysis) {
           checkPage(30)
-          doc.setFontSize(14)
+          doc.setFontSize(FONT_HEADING)
           doc.setFont('helvetica', 'bold')
           doc.setTextColor(0)
-          doc.text('Analysis', margin, y); y += 9
-          doc.setFontSize(10)
+          doc.text('Analysis', margin, y)
+          y += 9
+          doc.setFontSize(FONT_BODY)
           doc.setFont('helvetica', 'normal')
           const analysisLines: string[] = doc.splitTextToSize(analysis, pageWidth)
           for (let i = 0; i < analysisLines.length; i++) {
-            checkPage(6)
+            checkPage(LINE_SPACING)
             doc.text(analysisLines[i], margin + 4, y)
-            y += 5
+            y += LINE_SPACING
           }
-          y += 8
+          y += 7
         }
 
         // ── Key Reasons ──
         const keyReasons = report.key_reasons || []
         if (keyReasons.length > 0) {
           checkPage(20)
-          doc.setFontSize(14)
+          doc.setFontSize(FONT_HEADING)
           doc.setFont('helvetica', 'bold')
           doc.setTextColor(0)
-          doc.text('Key Reasons for Skip/Churn', margin, y); y += 9
-          doc.setFontSize(10)
+          doc.text('Key Reasons for Skip/Churn', margin, y)
+          y += 9
+          doc.setFontSize(FONT_BODY)
           doc.setFont('helvetica', 'normal')
           doc.setTextColor(60)
           keyReasons.forEach((r: string, i: number) => {
             const reasonLines: string[] = doc.splitTextToSize(`${i + 1}. ${r}`, pageWidth - 4)
             for (let j = 0; j < reasonLines.length; j++) {
-              checkPage(6)
+              checkPage(LINE_SPACING)
               doc.text(reasonLines[j], margin + 4, y)
-              y += 5
+              y += LINE_SPACING
             }
             y += 3
           })
-          y += 6
+          y += 5
         }
 
         // ── Recommendations ──
         if (recs.length > 0) {
           checkPage(20)
-          doc.setFontSize(14)
+          doc.setFontSize(FONT_HEADING)
           doc.setFont('helvetica', 'bold')
           doc.setTextColor(0)
-          doc.text('Recommendations', margin, y); y += 9
-          doc.setFontSize(10)
+          doc.text('Recommendations', margin, y)
+          y += 9
+          doc.setFontSize(FONT_BODY)
           doc.setFont('helvetica', 'normal')
           doc.setTextColor(0)
           recs.forEach((r: string, i: number) => {
             const clean = r.replace(/\*\*/g, '')
-            const lines: string[] = doc.splitTextToSize(`${i + 1}. ${clean}`, pageWidth - 4)
+            const lines: string[] = doc.splitTextToSize(clean, pageWidth - 4)
             for (let j = 0; j < lines.length; j++) {
-              checkPage(6)
+              checkPage(LINE_SPACING)
               doc.text(lines[j], margin + 4, y)
-              y += 5
+              y += LINE_SPACING
             }
-            y += 4
+            y += 3
           })
-          y += 6
+          y += 5
         }
 
         // ── Disclaimer ──
-        checkPage(15)
-        doc.setFontSize(8)
+        checkPage(30)
+        y += 5
+        doc.setFontSize(FONT_SMALL)
+        doc.setFont('helvetica', 'bold')
+        doc.setTextColor(80)
+        doc.text('DISCLAIMER', margin, y)
+        y += 6
         doc.setFont('helvetica', 'italic')
-        doc.setTextColor(120)
-        const disclaimerLines: string[] = doc.splitTextToSize(report.disclaimer || '', pageWidth)
+        doc.setTextColor(100)
+        
+        const disclaimerText = 'This simulation report is generated using AI-powered agent-based modeling with synthetic customer data. The results, including visit rates, churn rates, revenue estimates, risk assessments, and recommendations, are indicative projections only and do not reflect real-world accuracy. Actual customer behavior may vary significantly based on numerous factors not captured in this simulation. This report does not constitute professional business, financial, or strategic advice. Users should conduct their own research, validation, and testing before making business decisions based on these results. ARIA and its creators make no warranties regarding the accuracy, completeness, or reliability of this simulation output.'
+        
+        const disclaimerLines: string[] = doc.splitTextToSize(disclaimerText, pageWidth)
         for (let i = 0; i < disclaimerLines.length; i++) {
-          checkPage(5)
+          checkPage(4.5)
           doc.text(disclaimerLines[i], margin, y)
-          y += 4
+          y += 4.5
         }
 
         // Build filename from scenario name and date
@@ -610,7 +701,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
   async function send(e: React.FormEvent) {
     e.preventDefault()
     const text = input.trim()
-    if (!text || loading || simulationStatus === 'running' || simulationStatus === 'paused') return
+    if (!text || loading || simulationStatus === 'running') return
     
     // Abort any pending request
     if (abortRef.current) abortRef.current.abort()
@@ -641,6 +732,13 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
           business_profile: profile || { business_name: 'Unknown', business_type: 'Unknown' },
           use_external_context: useRealWorldContext,
           chat_session_id: chatSessionRef.current,
+          simulation_settings: simulationSettings ? {
+            income_levels: simulationSettings.incomeConstraints,
+            age_groups: simulationSettings.ageConstraints,
+            target_customer_types: simulationSettings.targetCustomerConstraints,
+            business_sizes: simulationSettings.businessSizeConstraints,
+            agent_count: simulationSettings.agentCount,
+          } : null,
         }),
         signal: controller.signal,
       })
@@ -720,6 +818,13 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
           business_profile: profile || { business_name: 'Unknown', business_type: 'Unknown' },
           use_external_context: useRealWorldContext,
           chat_session_id: chatSessionRef.current,
+          simulation_settings: simulationSettings ? {
+            income_levels: simulationSettings.incomeConstraints,
+            age_groups: simulationSettings.ageConstraints,
+            target_customer_types: simulationSettings.targetCustomerConstraints,
+            business_sizes: simulationSettings.businessSizeConstraints,
+            agent_count: simulationSettings.agentCount,
+          } : null,
         }),
         signal: controller.signal,
       })
@@ -796,6 +901,13 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
           business_profile: profile || { business_name: 'Unknown', business_type: 'Unknown' },
           use_external_context: useRealWorldContext,
           chat_session_id: chatSessionRef.current,
+          simulation_settings: simulationSettings ? {
+            income_levels: simulationSettings.incomeConstraints,
+            age_groups: simulationSettings.ageConstraints,
+            target_customer_types: simulationSettings.targetCustomerConstraints,
+            business_sizes: simulationSettings.businessSizeConstraints,
+            agent_count: simulationSettings.agentCount,
+          } : null,
         }),
         signal: controller.signal,
       })
@@ -843,7 +955,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
 
   function handleChip(s: Scenario | TemplateScenario) {
     // Don't allow launching if simulation is already running
-    if (simulationStatus === 'running' || simulationStatus === 'paused') return
+    if (simulationStatus === 'running') return
     
     // Check if this template requires user input
     if ('requires_input' in s && s.requires_input) {
@@ -906,6 +1018,16 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
     // Mark that user has started conversation
     setHasStartedConversation(true)
     
+    // Check if this is the tutorial demo
+    const isTutorialDemo = !!localStorage.getItem('aria-tutorial-demo-ready');
+    
+    // If tutorial demo, notify tutorial to advance
+    if (isTutorialDemo) {
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('tutorial-demo-clicked'));
+      }, 100);
+    }
+    
     // Add user message showing selected scenario
     const userMsg = `Run simulation: ${s.scenario_name}`
     setMessages(p => [...p, { 
@@ -955,7 +1077,12 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
       : null
     
     setScenarios([])
-    const resolvedAgentCount = simulationSettings?.agentCount ?? SIMULATION_MODES[fallbackMode].agentCount
+    
+    // Use fast mode (20 agents) for tutorial demo, otherwise use configured settings
+    const resolvedAgentCount = isTutorialDemo 
+      ? 20 
+      : (simulationSettings?.agentCount ?? SIMULATION_MODES[fallbackMode].agentCount);
+    
     onLaunch(scenarioWithProfile, resolvedAgentCount, {
       income_constraints: incomeConstraints,
       age_constraints: ageConstraints,
@@ -964,15 +1091,22 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
       b2b_percentage: simulationSettings?.b2bPercentage ?? null,
       chat_session_id: chatSessionRef.current,
     })
+    
+    // Clean up tutorial demo flag after launch
+    if (isTutorialDemo) {
+      localStorage.removeItem('aria-tutorial-demo-ready');
+    }
   }
 
   return (
-    <aside style={{
-      display: 'flex', flexDirection: 'column',
-      borderRight: '1px solid var(--gray-200)',
-      background: 'var(--white)', overflow: 'hidden',
-      position: 'relative',
-    }}>
+    <aside 
+      data-tutorial="chat-panel"
+      style={{
+        display: 'flex', flexDirection: 'column',
+        borderRight: '1px solid var(--gray-200)',
+        background: 'var(--white)', overflow: 'hidden',
+        position: 'relative',
+      }}>
       {/* Settings drawer — slides in from the right over the chat panel */}
       {/* Settings drawer — always mounted to preserve state, visibility toggled via CSS */}
       {profile?.district && (
@@ -1035,7 +1169,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
             <div style={{ flex: 1, overflowY: 'auto', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
               <SimulationSettings
                 district={profile.district}
-                disabled={simulationStatus === 'running' || simulationStatus === 'paused'}
+                disabled={simulationStatus === 'running'}
                 onSettingsChange={handleSettingsChange}
                 customerProfile={profile.customer_profile as Record<string, unknown> | undefined}
               />
@@ -1061,6 +1195,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
         {/* Settings button — only shown when a district profile is loaded */}
         {profile?.district && (
           <button
+            data-tutorial="simulation-settings"
             onClick={() => setSettingsOpen(o => !o)}
             title="Simulation settings"
             style={{
@@ -1223,11 +1358,13 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
             }}>
               Choose a scenario
             </p>
-            <button
-              type="button"
-              onClick={handleRefreshScenarios}
-              disabled={isRefreshing || loading}
-              style={{
+            {/* Hide refresh button for tutorial demo scenarios */}
+            {!scenarios.some(s => s.scenario_name?.includes('Demo:')) && (
+              <button
+                type="button"
+                onClick={handleRefreshScenarios}
+                disabled={isRefreshing || loading}
+                style={{
                 display: 'flex', alignItems: 'center', gap: '0.3rem',
                 padding: '0.3rem 0.6rem',
                 background: isRefreshing ? 'var(--gray-100)' : 'transparent',
@@ -1271,15 +1408,21 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
               </svg>
               {isRefreshing ? 'Refreshing...' : 'Refresh'}
             </button>
+            )}
           </div>
           {scenarios.slice(0, 4).map((s, i) => (
-            <ScenarioChip key={i} scenario={s} onClick={() => handleChip(s)} />
+            <ScenarioChip 
+              key={i} 
+              scenario={s} 
+              onClick={() => handleChip(s)}
+              isTutorialDemo={i === 0 && !!localStorage.getItem('aria-tutorial-demo-ready')}
+            />
           ))}
         </div>
       )}
 
       {/* One simulation per chat: show prompt to start new chat after sim completes */}
-      {simulationRanInSession && simulationStatus !== 'running' && simulationStatus !== 'paused' ? (
+      {simulationRanInSession && simulationStatus !== 'running' ? (
         <div style={{
           padding: '1rem',
           borderTop: '1px solid var(--gray-200)',
@@ -1443,7 +1586,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
         )}
 
         {/* Simulation running indicator */}
-        {(simulationStatus === 'running' || simulationStatus === 'paused') && (
+        {simulationStatus === 'running' && (
           <div style={{
             display: 'flex', alignItems: 'center', gap: '0.5rem',
             padding: '0.75rem',
@@ -1457,7 +1600,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
               animation: simulationStatus === 'running' ? 'pulse-dot 1.2s infinite' : 'none',
             }} />
             <span style={{ fontSize: '0.8rem', color: 'var(--gray-600)' }}>
-              {simulationStatus === 'running' ? 'Simulation running...' : 'Simulation paused'}
+              Simulation running...
             </span>
           </div>
         )}
@@ -1467,17 +1610,18 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
           {/* Real-world context toggle — inline with input */}
           <button
             type="button"
+            data-tutorial="real-world-context"
             onClick={() => setUseRealWorldContext(v => !v)}
-            disabled={simulationStatus === 'running' || simulationStatus === 'paused'}
+            disabled={simulationStatus === 'running'}
             title="Turn this on when your question involves external factors like price changes, economic trends, or market conditions. This pulls recent news and economic data to make scenarios more realistic."
             style={{
               width: 36, height: 36, borderRadius: 8, flexShrink: 0,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               border: `1.5px solid ${useRealWorldContext ? 'var(--accent)' : 'var(--gray-200)'}`,
               background: useRealWorldContext ? 'rgba(99, 102, 241, 0.1)' : 'transparent',
-              cursor: (simulationStatus === 'running' || simulationStatus === 'paused') ? 'not-allowed' : 'pointer',
+              cursor: simulationStatus === 'running' ? 'not-allowed' : 'pointer',
               transition: 'all 0.15s',
-              opacity: (simulationStatus === 'running' || simulationStatus === 'paused') ? 0.5 : 1,
+              opacity: simulationStatus === 'running' ? 0.5 : 1,
               position: 'relative',
             }}
             aria-label={useRealWorldContext ? 'Real-world context enabled' : 'Enable real-world context'}
@@ -1496,14 +1640,14 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
             value={input}
             onChange={e => setInput(e.target.value)}
             placeholder={
-              simulationStatus === 'running' || simulationStatus === 'paused'
+              simulationStatus === 'running'
                 ? 'Wait for simulation to complete...'
                 : useRealWorldContext
                   ? 'Ask about market trends, economic factors...'
                   : 'Describe your scenario...'
             }
             maxLength={500}
-            disabled={loading || simulationStatus === 'running' || simulationStatus === 'paused'}
+            disabled={loading || simulationStatus === 'running'}
             style={{
               flex: 1,
             borderWidth: '2px',
@@ -1512,10 +1656,10 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
             borderRadius: 8,
               padding: '0.6rem 0.9rem', fontSize: '0.875rem',
               fontFamily: 'var(--font-family)', color: 'var(--gray-900)',
-              background: (simulationStatus === 'running' || simulationStatus === 'paused') ? 'var(--gray-50)' : 'var(--white)',
+              background: simulationStatus === 'running' ? 'var(--gray-50)' : 'var(--white)',
               outline: 'none',
               transition: 'border-color 0.2s, background 0.2s',
-              cursor: (simulationStatus === 'running' || simulationStatus === 'paused') ? 'not-allowed' : 'text',
+              cursor: simulationStatus === 'running' ? 'not-allowed' : 'text',
             }}
             onFocus={e => {
               if (simulationStatus === 'idle' || simulationStatus === 'done') {
@@ -1526,15 +1670,15 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
           />
           <button
             type="submit"
-            disabled={loading || !input.trim() || simulationStatus === 'running' || simulationStatus === 'paused'}
+            disabled={loading || !input.trim() || simulationStatus === 'running'}
             style={{
               width: 40, height: 40, borderRadius: 8,
               background: 'var(--accent)', border: 'none',
               color: 'white', 
-              cursor: (loading || !input.trim() || simulationStatus === 'running' || simulationStatus === 'paused') ? 'not-allowed' : 'pointer',
+              cursor: (loading || !input.trim() || simulationStatus === 'running') ? 'not-allowed' : 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               flexShrink: 0, 
-              opacity: (loading || !input.trim() || simulationStatus === 'running' || simulationStatus === 'paused') ? 0.4 : 1,
+              opacity: (loading || !input.trim() || simulationStatus === 'running') ? 0.4 : 1,
               transition: 'opacity 0.2s',
             }}
           >
@@ -1628,11 +1772,12 @@ function TemplateScenarioCard({ scenario, onClick }: { scenario: Scenario; onCli
   )
 }
 
-function ScenarioChip({ scenario, onClick }: { scenario: Scenario; onClick: () => void }) {
+function ScenarioChip({ scenario, onClick, isTutorialDemo }: { scenario: Scenario; onClick: () => void; isTutorialDemo?: boolean }) {
   const [hov, setHov] = useState(false)
   const icon = SCENARIO_ICONS[scenario.scenario_type] || SCENARIO_ICONS.default
   return (
     <button
+      data-tutorial={isTutorialDemo ? "demo-scenario-card" : undefined}
       onClick={onClick}
       onMouseEnter={() => setHov(true)}
       onMouseLeave={() => setHov(false)}

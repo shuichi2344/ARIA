@@ -95,7 +95,6 @@ export function useSim(sessionId: string, profileId?: string) {
   const [agents,        setAgents]        = useState<Agent[]>([])
   const [metrics,       setMetrics]       = useState<WeekSummary | null>(null)
   const [currentWeek,   setCurrentWeek]   = useState(0)
-  const [isPaused,      setIsPaused]      = useState(false)
   const [feed,          setFeed]          = useState<FeedItem[]>([])
   const [scenarioName,  setScenarioName]  = useState('')
   const [liveScenarioName, setLiveScenarioName] = useState('')  // name of the running sim (unaffected by history viewing)
@@ -262,7 +261,6 @@ export function useSim(sessionId: string, profileId?: string) {
       const data = await res.json()
       simIdRef.current = data.simulation_id
       setCurrentWeek(0)
-      setIsPaused(false)
       if (data.agents) { setAgents(data.agents); agentsRef.current = data.agents }
       setInfluences([]); influencesRef.current = []
       setMetrics(null);  metricsRef.current = null
@@ -586,16 +584,6 @@ export function useSim(sessionId: string, profileId?: string) {
     }
   }, [sessionId, profileId])
 
-  const togglePause = useCallback(() => {
-    if (!simIdRef.current) return
-    const next = !isPaused
-    setIsPaused(next)
-    const newStatus = next ? 'paused' : 'running'
-    setStatus(newStatus)
-    statusRef.current = newStatus
-    fetch(`${API_BASE}/api/simulation/${simIdRef.current}/${next ? 'pause' : 'resume'}`, { method: 'POST' }).catch(() => {})
-  }, [isPaused])
-
   const restoreSnapshot = useCallback((snap: SimSnapshot) => {
     // If a simulation is currently running, DON'T close the SSE or destroy live state.
     // Instead, just overlay the history view. The live sim continues in the background.
@@ -618,7 +606,6 @@ export function useSim(sessionId: string, profileId?: string) {
     setAgents(snap.agents)
     setFeed(snap.feed)
     setInfluences(snap.influences)
-    setIsPaused(false)
     setRestoredReport(snap.report)
     setRestoredDescription(snap.description || '')
     setIsRestoredFromHistory(true)
@@ -648,7 +635,6 @@ export function useSim(sessionId: string, profileId?: string) {
     setAgents([])
     setMetrics(null)
     setCurrentWeek(0)
-    setIsPaused(false)
     setFeed([])
     setScenarioName('')
     setLiveScenarioName('')
@@ -672,6 +658,9 @@ export function useSim(sessionId: string, profileId?: string) {
   }, [])
   
   const terminate = useCallback(() => {
+    // Dispatch event for tutorial to listen
+    window.dispatchEvent(new CustomEvent('simulation-stopped'));
+    
     // Terminate the running simulation gracefully
     if (simIdRef.current) {
       fetch(`${API_BASE}/api/simulation/${simIdRef.current}/cancel`, { method: 'POST' }).catch(() => {})
@@ -690,7 +679,6 @@ export function useSim(sessionId: string, profileId?: string) {
     setAgents([])
     setMetrics(null)
     setCurrentWeek(0)
-    setIsPaused(false)
     setFeed([])
     setScenarioName('')
     setLiveScenarioName('')
@@ -734,9 +722,9 @@ export function useSim(sessionId: string, profileId?: string) {
 
   return {
     status, agents, metrics, currentWeek,
-    isPaused, feed, scenarioName, liveScenarioName, influences,
+    feed, scenarioName, liveScenarioName, influences,
     history, restoreSnapshot, deleteSnapshot,
-    launch, togglePause, reset, resumeLive, terminate,
+    launch, reset, resumeLive, terminate,
     restoredReport, restoredDescription, isRestoredFromHistory,
     completedSims, activeTabId, setActiveTabId,
     monteCarloState,

@@ -7,7 +7,7 @@ import type { DemographicsResponse } from '@/lib/api'
 export type SimulationMode = 'fast' | 'balanced' | 'accurate'
 
 export const SIMULATION_MODES: Record<SimulationMode, { label: string; agentCount: number; description: string; colorLight: string; colorBorder: string; colorText: string }> = {
-  fast:     { label: 'Fast',     agentCount: 20,  description: 'Quick results, less detail',     colorLight: '#fce7f3', colorBorder: '#ec4899', colorText: '#be185d' },
+  fast:     { label: 'Fast',     agentCount: 20,  description: 'Quick demo, less agents',        colorLight: '#fce7f3', colorBorder: '#ec4899', colorText: '#be185d' },
   balanced: { label: 'Balanced', agentCount: 50,  description: 'Good mix of speed and accuracy', colorLight: '#fef9c3', colorBorder: '#eab308', colorText: '#854d0e' },
   accurate: { label: 'Accurate', agentCount: 100, description: 'Most detailed, takes longer',    colorLight: '#dcfce7', colorBorder: '#22c55e', colorText: '#15803d' },
 }
@@ -49,7 +49,9 @@ export default function SimulationSettings({ district, disabled, onSettingsChang
   // Hybrid
   const [b2bPercentage, setB2bPercentage] = useState(50)
   
-  const [simulationMode, setSimulationMode] = useState<SimulationMode>('balanced')
+  // Check if tutorial is active and set to fast mode
+  const isTutorialActive = typeof window !== 'undefined' && !!localStorage.getItem('aria-tutorial-demo-ready');
+  const [simulationMode, setSimulationMode] = useState<SimulationMode>(isTutorialActive ? 'fast' : 'balanced')
   const [validationMsg, setValidationMsg] = useState<string | null>(null)
 
   // Derive agent count from selected mode

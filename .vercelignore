@@ -1,0 +1,44 @@
+# Python backend files (not deployed to Vercel)
+aria/
+tests/
+scripts/
+migrations/
+data/
+examples/
+*.py
+requirements.txt
+start_api.py
+aria_api.log
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.hypothesis/
+.ruff_cache/
+
+# Environment and config
+.env
+.env.local
+.env.*.local
+
+# Documentation
+docs/
+README.md
+DEPLOYMENT_ISSUES.md
+
+# IDE
+.vscode/
+.kiro/
+
+# Git
+.git/
+.gitignore

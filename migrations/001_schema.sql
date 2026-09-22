@@ -57,10 +57,14 @@ CREATE TABLE public.scenarios (
   scenario_type character varying NOT NULL,
   description text NOT NULL,
   parameters jsonb NOT NULL,
+  deleted boolean NOT NULL DEFAULT FALSE,
+  deleted_at timestamp without time zone,
   created_at timestamp without time zone DEFAULT now(),
   CONSTRAINT scenarios_pkey PRIMARY KEY (scenario_id),
   CONSTRAINT scenarios_profile_fk FOREIGN KEY (profile_id) REFERENCES public.business_profiles(profile_id)
 );
+
+COMMENT ON COLUMN public.scenarios.deleted IS 'Soft delete flag - when TRUE, record is hidden from normal queries but preserved for audit trail';
 
 CREATE TABLE public.simulation_events (
   event_id uuid NOT NULL DEFAULT uuid_generate_v4(),
@@ -101,6 +105,8 @@ CREATE TABLE public.simulations (
   monte_carlo_enabled boolean DEFAULT false,
   monte_carlo_total_runs integer DEFAULT 1,
   monte_carlo_converged boolean DEFAULT NULL,
+  deleted boolean NOT NULL DEFAULT FALSE,
+  deleted_at timestamp without time zone,
   started_at timestamp without time zone,
   completed_at timestamp without time zone,
   created_at timestamp without time zone DEFAULT now(),
@@ -108,11 +114,17 @@ CREATE TABLE public.simulations (
   CONSTRAINT simulations_scenario_fk FOREIGN KEY (scenario_id) REFERENCES public.scenarios(scenario_id)
 );
 
+COMMENT ON COLUMN public.simulations.deleted IS 'Soft delete flag - when TRUE, record is hidden from normal queries but preserved for audit trail';
+
 -- NOTE: public.users and public.password_reset_tokens have been removed.
 -- User identity is now managed entirely by Supabase Auth (auth.users).
 -- See migrations/002_supabase_auth_migration.sql for the transition SQL.
 
 -- Index for filtering Monte Carlo simulations
 CREATE INDEX simulations_monte_carlo_idx ON public.simulations(monte_carlo_enabled, monte_carlo_converged);
+
+-- Indexes for efficient filtering of non-deleted records
+CREATE INDEX simulations_deleted_idx ON public.simulations(deleted) WHERE deleted = FALSE;
+CREATE INDEX scenarios_deleted_idx ON public.scenarios(deleted) WHERE deleted = FALSE;
 
 -- sales_records table removed (feature dropped)

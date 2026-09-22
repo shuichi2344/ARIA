@@ -12,7 +12,7 @@ interface Props {
   onNewChat: () => void
   // Current/live simulation info
   currentSimName?: string
-  currentSimStatus?: 'running' | 'paused' | 'done' | 'idle'
+  currentSimStatus?: 'running' | 'done' | 'idle'
   onGoToCurrent?: () => void
 }
 
@@ -61,7 +61,7 @@ export default function HistorySidebar({ open, onClose, history, onRestore, onDe
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const groups = groupByDate(history)
 
-  const showCurrentItem = currentSimName && currentSimStatus && (currentSimStatus === 'running' || currentSimStatus === 'paused')
+  const showCurrentItem = currentSimName && currentSimStatus && currentSimStatus === 'running'
 
   return (
     <>
@@ -147,9 +147,7 @@ export default function HistorySidebar({ open, onClose, history, onRestore, onDe
                 {/* Status dot */}
                 <span style={{
                   width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-                  background: currentSimStatus === 'running' ? '#22c55e'
-                    : currentSimStatus === 'paused' ? '#f59e0b'
-                    : 'var(--accent)',
+                  background: currentSimStatus === 'running' ? '#22c55e' : 'var(--accent)',
                   animation: currentSimStatus === 'running' ? 'pulse-dot 1.2s infinite' : 'none',
                 }} />
 
@@ -163,9 +161,7 @@ export default function HistorySidebar({ open, onClose, history, onRestore, onDe
                     {currentSimName}
                   </div>
                   <div style={{ fontSize: '0.72rem', color: 'var(--gray-500)', marginTop: 1 }}>
-                    {currentSimStatus === 'running' ? 'Running now…'
-                      : currentSimStatus === 'paused' ? 'Paused'
-                      : 'Just completed'}
+                    {currentSimStatus === 'running' ? 'Running now…' : 'Just completed'}
                   </div>
                 </div>
               </div>

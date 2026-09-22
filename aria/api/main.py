@@ -685,6 +685,7 @@ async def update_business_profile(profile_id: str, business_data: BusinessProfil
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Chat History endpoints
 # ---------------------------------------------------------------------------
 
@@ -784,6 +785,11 @@ class ScenarioSuggestRequest(BaseModel):
     business_profile: Dict[str, Any]
     use_external_context: bool = Field(default=False)
     chat_session_id: Optional[str] = Field(None, max_length=100)
+    # Simulation settings to ensure scenarios align with target customers
+    simulation_settings: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Simulation configuration including target customers, age groups, income levels"
+    )
 
     @field_validator("user_question")
     @classmethod
@@ -852,6 +858,7 @@ async def suggest_scenarios(request: Request, body: ScenarioSuggestRequest):
             business_profile=body.business_profile,
             user_question=body.user_question,
             use_external_context=body.use_external_context,
+            simulation_settings=body.simulation_settings,
         )
 
         # If the LLM flagged the input as irrelevant, surface it as a 422
@@ -981,7 +988,6 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
                 "chat_session_id": body.chat_session_id,
                 "agents":         agents,
                 "current_week":   0,
-                "is_paused":      False,
                 "status":         "running",
                 "events":         asyncio.Queue(),
                 "target_customer_constraints": target_customer_constraints,
@@ -1226,7 +1232,6 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
             "chat_session_id": body.chat_session_id,
             "agents":         agents,
             "current_week":   0,
-            "is_paused":      False,
             "status":         "running",
             "events":         asyncio.Queue(),
             "target_customer_constraints": target_customer_constraints,
@@ -1312,22 +1317,6 @@ async def stream_simulation(sim_id: str):
             "X-Accel-Buffering": "no",
         }
     )
-
-
-@app.post("/api/simulation/{sim_id}/pause")
-async def pause_simulation(sim_id: str):
-    if sim_id not in _active_sims:
-        raise HTTPException(status_code=404, detail="Simulation not found")
-    _active_sims[sim_id]["is_paused"] = True
-    return {"status": "paused"}
-
-
-@app.post("/api/simulation/{sim_id}/resume")
-async def resume_simulation(sim_id: str):
-    if sim_id not in _active_sims:
-        raise HTTPException(status_code=404, detail="Simulation not found")
-    _active_sims[sim_id]["is_paused"] = False
-    return {"status": "running"}
 
 
 @app.post("/api/simulation/{sim_id}/cancel")
@@ -1891,9 +1880,6 @@ async def _run_simulation_single(sim_id: str, run_number: int = 1) -> Dict[str, 
         
         if not mesa_agent.is_active:
             continue
-
-        while sim.get("is_paused"):
-            await asyncio.sleep(0.5)
 
         result = await mesa_agent.make_decision(
             scenario_context=scenario_context,

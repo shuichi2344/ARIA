@@ -12,22 +12,24 @@ import { useSim } from './useSim'
 import type { MonteCarloState } from './useSim'
 import { useSession } from '@/context/SessionContext'
 import type { AriaSession, BusinessProfile, SimReport } from './types'
+import { useTutorial } from './useTutorial'
 
 interface Props {
   session: AriaSession
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  idle: 'Ready', running: 'Running', paused: 'Paused', done: 'Complete',
+  idle: 'Ready', running: 'Running', done: 'Complete',
 }
 const STATUS_DOT: Record<string, string> = {
-  idle: 'var(--gray-400)', running: '#22c55e', paused: '#f59e0b', done: 'var(--accent)',
+  idle: 'var(--gray-400)', running: '#22c55e', done: 'var(--accent)',
 }
 
 export default function DashboardPage({ session }: Props) {
   const router = useRouter()
   const { logout } = useSession()
   const [profile, setProfile] = useState<BusinessProfile | null>(null)
+  const { startTutorial, resetTutorial, advanceToSimulationStep, isDemoReady } = useTutorial()
 
   // Apply saved theme
   useEffect(() => {
@@ -55,6 +57,55 @@ export default function DashboardPage({ session }: Props) {
   // This is user-controlled and should NOT auto-reset when new runs start
   const [showThoughtProcess, setShowThoughtProcess] = useState(false)
   const showThoughtProcessRef = useRef(false) // Persist across runs
+  
+  // Track which tutorial steps have been shown to prevent re-triggering
+  const tutorialStepsShownRef = useRef({
+    running: false,
+    monteCarlo: false,
+    convergence: false,
+    results: false,
+  })
+
+  // Auto-start tutorial on first visit (after a short delay to let the UI settle)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      startTutorial()
+    }, 800)
+    return () => clearTimeout(timer)
+  }, [startTutorial])
+
+  // Advance tutorial when simulation reaches key stages - only once per stage
+  useEffect(() => {
+    if (sim.status === 'running' && sim.agents.length > 0 && !tutorialStepsShownRef.current.running) {
+      tutorialStepsShownRef.current.running = true
+      advanceToSimulationStep('running')
+    }
+  }, [sim.status, sim.agents.length, advanceToSimulationStep])
+
+  useEffect(() => {
+    if (sim.monteCarloState && sim.monteCarloState.current_run >= 2 && !tutorialStepsShownRef.current.monteCarlo) {
+      tutorialStepsShownRef.current.monteCarlo = true
+      advanceToSimulationStep('monte-carlo')
+    }
+  }, [sim.monteCarloState?.current_run, advanceToSimulationStep])
+
+  useEffect(() => {
+    if (sim.monteCarloState && sim.monteCarloState.wci_cv > 0 && sim.monteCarloState.wci_cv < 5 && !tutorialStepsShownRef.current.convergence) {
+      tutorialStepsShownRef.current.convergence = true
+      setTimeout(() => {
+        advanceToSimulationStep('convergence')
+      }, 2000)
+    }
+  }, [sim.monteCarloState?.wci_cv, advanceToSimulationStep])
+
+  useEffect(() => {
+    if (sim.status === 'done' && completedReport && !tutorialStepsShownRef.current.results) {
+      tutorialStepsShownRef.current.results = true
+      setTimeout(() => {
+        advanceToSimulationStep('results')
+      }, 1500)
+    }
+  }, [sim.status, completedReport, advanceToSimulationStep])
   
   // Sync state and ref
   useEffect(() => {
@@ -167,7 +218,7 @@ export default function DashboardPage({ session }: Props) {
         onClose={() => setHistoryOpen(false)}
         history={sim.history}
         currentSimName={sim.liveScenarioName || undefined}
-        currentSimStatus={sim.status !== 'idle' ? sim.status : undefined}
+        currentSimStatus={sim.status === 'idle' ? undefined : sim.status === 'paused' ? 'running' : sim.status}
         onGoToCurrent={() => {
           // Resume viewing the live/current simulation
           sim.resumeLive()
@@ -214,18 +265,21 @@ export default function DashboardPage({ session }: Props) {
       />
 
       {/* ── Top bar ── matches .dash-header */}
-      <header style={{
-        position: 'fixed', top: 0, left: 0, right: 0, height: 56,
-        background: 'var(--white)',
-        borderBottom: '1px solid var(--gray-200)',
-        display: 'flex', alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0 1.5rem', zIndex: 100,
-      }}>
+      <header 
+        data-tutorial="welcome"
+        style={{
+          position: 'fixed', top: 0, left: 0, right: 0, height: 56,
+          background: 'var(--white)',
+          borderBottom: '1px solid var(--gray-200)',
+          display: 'flex', alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 1.5rem', zIndex: 100,
+        }}>
         {/* Left */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           {/* History toggle */}
           <button
+            data-tutorial="history-sidebar"
             onClick={() => setHistoryOpen(o => !o)}
             title="Simulation history"
             style={{
@@ -300,6 +354,7 @@ export default function DashboardPage({ session }: Props) {
               session={session}
               onLogout={handleLogout}
               onEditProfile={() => router.push('/onboarding?edit=1')}
+              onStartTutorial={resetTutorial}
             />
           </div>
         </div>
@@ -319,7 +374,7 @@ export default function DashboardPage({ session }: Props) {
           onLaunch={sim.launch}
           onSimulationComplete={() => {}}
           onReset={sim.reset}
-          simulationStatus={sim.isRestoredFromHistory ? 'done' : sim.status}
+          simulationStatus={sim.isRestoredFromHistory ? 'done' : sim.status === 'paused' ? 'running' : sim.status}
         />
 
         {/* Sim panel */}
@@ -451,7 +506,7 @@ export default function DashboardPage({ session }: Props) {
             const displayFeed = sim.feed
 
             // Show simplified loading screen while sim is running (unless user opened thought process)
-            const isRunningLive = sim.status === 'running' || sim.status === 'paused'
+            const isRunningLive = sim.status === 'running'
 
             return (
             <div style={{
@@ -478,18 +533,12 @@ export default function DashboardPage({ session }: Props) {
                     </span>
                   )}
                   {/* Monte Carlo badge — shows live run progress and convergence */}
-                  {sim.monteCarloState && !sim.isRestoredFromHistory && isRunningLive && (sim.status === 'running' || sim.status === 'paused') && (
+                  {sim.monteCarloState && !sim.isRestoredFromHistory && isRunningLive && (
                     <MonteCarloBadge mc={sim.monteCarloState} />
                   )}
                 </div>
-                {isRunningLive && !viewingCompletedRun && !sim.isRestoredFromHistory && (sim.status === 'running' || sim.status === 'paused') && (
+                {isRunningLive && !viewingCompletedRun && !sim.isRestoredFromHistory && (
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <CtrlBtn onClick={sim.togglePause} title={sim.isPaused ? 'Resume' : 'Pause'}>
-                      {sim.isPaused
-                        ? <svg style={{ width: 18, height: 18 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                        : <svg style={{ width: 18, height: 18 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-                      }
-                    </CtrlBtn>
                     <TerminateBtn onClick={sim.terminate} />
                   </div>
                 )}
@@ -505,7 +554,6 @@ export default function DashboardPage({ session }: Props) {
                   decidedCount={decidedCount}
                   monteCarloState={sim.monteCarloState}
                   simStartTime={sim.simStartTime.current}
-                  isPaused={sim.isPaused}
                   onShowThoughtProcess={() => {
                     setShowThoughtProcess(true)
                     showThoughtProcessRef.current = true
@@ -642,24 +690,23 @@ interface SimLoadingScreenProps {
   decidedCount: number
   monteCarloState: MonteCarloState | null
   simStartTime: number | null
-  isPaused: boolean
   onShowThoughtProcess: () => void
 }
 
 function SimLoadingScreen({
   scenarioName, message, progressPct, agentCount, decidedCount,
-  monteCarloState, simStartTime, isPaused, onShowThoughtProcess,
+  monteCarloState, simStartTime, onShowThoughtProcess,
 }: SimLoadingScreenProps) {
   const [elapsed, setElapsed] = useState(0)
 
   // Tick every second to keep ETA fresh
   useEffect(() => {
-    if (!simStartTime || isPaused) return
+    if (!simStartTime) return
     const id = setInterval(() => {
       setElapsed(Math.floor((Date.now() - simStartTime) / 1000))
     }, 1000)
     return () => clearInterval(id)
-  }, [simStartTime, isPaused])
+  }, [simStartTime])
 
   // ETA: extrapolate from current pace
   function formatEta(): string {
@@ -684,14 +731,16 @@ function SimLoadingScreen({
     : null
 
   return (
-    <div style={{
-      flex: 1, display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center',
-      gap: '1.75rem', padding: '2rem',
-      background: 'var(--white)', borderRadius: 12,
-      border: '1px solid var(--gray-200)',
-      overflow: 'hidden', position: 'relative',
-    }}>
+    <div 
+      data-tutorial="simulation-running"
+      style={{
+        flex: 1, display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        gap: '1.75rem', padding: '2rem',
+        background: 'var(--white)', borderRadius: 12,
+        border: '1px solid var(--gray-200)',
+        overflow: 'hidden', position: 'relative',
+      }}>
       {/* Subtle animated background rings */}
       <div style={{
         position: 'absolute', width: 320, height: 320,
@@ -718,7 +767,7 @@ function SimLoadingScreen({
       {/* Scenario name + status */}
       <div style={{ textAlign: 'center', zIndex: 1, animation: 'fade-up 0.4s ease' }}>
         <p style={{ margin: '0 0 0.35rem', fontSize: '0.72rem', fontWeight: 600, color: 'var(--gray-400)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-          {isPaused ? 'Paused' : 'Simulating'}
+          Simulating
         </p>
         <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800, color: 'var(--gray-900)', fontFamily: 'var(--font-display)' }}>
           {scenarioName || 'Running simulation…'}
@@ -736,15 +785,13 @@ function SimLoadingScreen({
           maxWidth: 420, textAlign: 'center',
           animation: 'fade-up 0.3s ease',
         }}>
-        {!isPaused && (
-          <span style={{
-            width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-            background: '#22c55e',
-            animation: 'pulse-dot 1.2s infinite',
-          }} />
-        )}
+        <span style={{
+          width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+          background: '#22c55e',
+          animation: 'pulse-dot 1.2s infinite',
+        }} />
         <span style={{ fontSize: '0.85rem', color: 'var(--gray-700)', fontWeight: 500 }}>
-          {isPaused ? '⏸ Simulation paused' : message}
+          {message}
         </span>
       </div>
 
@@ -1083,6 +1130,7 @@ function MonteCarloBadge({ mc }: { mc: MonteCarloState }) {
 
   return (
     <div
+      data-tutorial="monte-carlo-badge"
       title={tooltip}
       onMouseEnter={() => setHov(true)}
       onMouseLeave={() => setHov(false)}
@@ -1154,12 +1202,14 @@ function RestoredSummaryPanel({ report, description }: { report: SimReport; desc
   const riskColor = RISK_COLOUR[report.risk_level] || 'var(--gray-500)'
 
   return (
-    <div style={{
-      display: 'flex', flexDirection: 'column', gap: '1rem',
-      padding: '1.25rem', overflowY: 'auto',
-      background: 'var(--white)', borderRadius: 10,
-      border: '1px solid var(--gray-200)',
-    }}>
+    <div 
+      data-tutorial="simulation-results"
+      style={{
+        display: 'flex', flexDirection: 'column', gap: '1rem',
+        padding: '1.25rem', overflowY: 'auto',
+        background: 'var(--white)', borderRadius: 10,
+        border: '1px solid var(--gray-200)',
+      }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
         <svg style={{ width: 20, height: 20, color: 'var(--accent)', flexShrink: 0 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

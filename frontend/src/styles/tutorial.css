@@ -1,0 +1,266 @@
+/* ARIA Tutorial Overlay Styles - matching the burgundy/accent theme */
+
+/* Override Driver.js default styles to match ARIA design */
+.driver-popover {
+  background: var(--white) !important;
+  border: 2px solid var(--accent) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12) !important;
+  max-width: 360px !important;
+  padding: 0 !important;
+  animation: tutorial-fade-in 0.3s ease !important;
+}
+
+@keyframes tutorial-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Popover arrow */
+.driver-popover-arrow {
+  border-color: var(--accent) !important;
+}
+
+/* Hide arrow for the last step which has no element */
+.driver-popover[aria-label*="10 of 10"] .driver-popover-arrow,
+.driver-popover[aria-label*="Tutorial Complete"] .driver-popover-arrow {
+  display: none !important;
+}
+
+.driver-popover-arrow-side-top.driver-popover-arrow {
+  border-top-color: var(--accent) !important;
+}
+
+.driver-popover-arrow-side-bottom.driver-popover-arrow {
+  border-bottom-color: var(--accent) !important;
+}
+
+.driver-popover-arrow-side-left.driver-popover-arrow {
+  border-left-color: var(--accent) !important;
+}
+
+.driver-popover-arrow-side-right.driver-popover-arrow {
+  border-right-color: var(--accent) !important;
+}
+
+/* Title */
+.driver-popover-title {
+  font-family: var(--font-display), -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+  font-size: 1rem !important;
+  font-weight: 800 !important;
+  color: var(--gray-900) !important;
+  padding: 1rem 1.25rem 0.5rem !important;
+  margin: 0 !important;
+  background: transparent !important;
+  border: none !important;
+}
+
+/* Description */
+.driver-popover-description {
+  font-family: var(--font-family), -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+  font-size: 0.875rem !important;
+  line-height: 1.6 !important;
+  color: var(--gray-600) !important;
+  padding: 0 1.25rem 1rem !important;
+  margin: 0 !important;
+}
+
+/* Footer with buttons */
+.driver-popover-footer {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 0.75rem 1.25rem 1rem !important;
+  margin: 0 !important;
+  border-top: 1px solid var(--gray-100) !important;
+  background: transparent !important;
+}
+
+/* Center button group when there's only one button */
+.driver-popover-footer:has(.driver-popover-navigation-btns > button:only-child) {
+  justify-content: center !important;
+}
+
+.driver-popover-footer:has(.driver-popover-navigation-btns > button:only-child) .driver-popover-progress-text {
+  display: none !important;
+}
+
+/* Progress text */
+.driver-popover-progress-text {
+  font-family: var(--font-family), -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+  font-size: 0.75rem !important;
+  font-weight: 600 !important;
+  color: var(--gray-500) !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+}
+
+/* Button group */
+.driver-popover-navigation-btns {
+  display: flex !important;
+  gap: 0.5rem !important;
+}
+
+/* All buttons */
+.driver-popover-btn {
+  font-family: var(--font-family), -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+  font-size: 0.8rem !important;
+  font-weight: 600 !important;
+  padding: 0.5rem 1rem !important;
+  border-radius: 8px !important;
+  border: none !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+  outline: none !important;
+}
+
+/* Next/Done button */
+.driver-popover-next-btn {
+  background: var(--accent) !important;
+  color: white !important;
+}
+
+.driver-popover-next-btn:hover {
+  opacity: 0.9 !important;
+  transform: translateY(-1px) !important;
+}
+
+.driver-popover-next-btn:active {
+  transform: translateY(0) !important;
+}
+
+/* Previous button */
+.driver-popover-prev-btn {
+  background: var(--gray-100) !important;
+  color: var(--gray-700) !important;
+}
+
+.driver-popover-prev-btn:hover {
+  background: var(--gray-200) !important;
+}
+
+/* Close button */
+.driver-popover-close-btn {
+  position: absolute !important;
+  top: 0.75rem !important;
+  right: 0.75rem !important;
+  width: 28px !important;
+  height: 28px !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  color: var(--gray-400) !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 1.25rem !important;
+  line-height: 1 !important;
+}
+
+.driver-popover-close-btn:hover {
+  background: var(--gray-100) !important;
+  color: var(--gray-600) !important;
+}
+
+/* Overlay background - BLOCKS all clicks until step 6 */
+.driver-overlay {
+  background: rgba(0, 0, 0, 0.01) !important;
+  animation: tutorial-overlay-fade-in 0.3s ease !important;
+  pointer-events: auto !important; /* Block all clicks by default */
+}
+
+/* After demo step (step 6+), allow clicks everywhere */
+.driver-overlay.tutorial-interactive-phase {
+  pointer-events: none !important;
+}
+
+@keyframes tutorial-overlay-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Highlighted element - brighter with subtle glow */
+.driver-active-element {
+  border-radius: 8px !important;
+  outline: 3px solid var(--accent) !important;
+  outline-offset: 4px !important;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.15) !important;
+  position: relative !important;
+  z-index: 9998 !important;
+}
+
+/* Stage positioning - ensure popover is visible */
+.driver-popover-tip {
+  max-width: 360px !important;
+}
+
+/* Disable button state */
+.driver-popover-btn:disabled {
+  opacity: 0.5 !important;
+  cursor: not-allowed !important;
+}
+
+/* Mobile responsive */
+@media (max-width: 640px) {
+  .driver-popover {
+    max-width: calc(100vw - 32px) !important;
+    margin: 16px !important;
+  }
+
+  .driver-popover-title {
+    font-size: 0.95rem !important;
+    padding: 0.875rem 1rem 0.5rem !important;
+  }
+
+  .driver-popover-description {
+    font-size: 0.8rem !important;
+    padding: 0 1rem 0.875rem !important;
+  }
+
+  .driver-popover-footer {
+    padding: 0.625rem 1rem 0.875rem !important;
+  }
+
+  .driver-popover-btn {
+    font-size: 0.75rem !important;
+    padding: 0.4rem 0.8rem !important;
+  }
+}
+
+/* Animation for active elements */
+@keyframes tutorial-highlight-pulse {
+  0%, 100% {
+    outline-color: var(--accent);
+  }
+  50% {
+    outline-color: var(--accent-warm);
+  }
+}
+
+.driver-active-element {
+  animation: tutorial-highlight-pulse 2s ease-in-out infinite !important;
+}
+
+/* Ensure tutorial works with fixed/sticky elements */
+.driver-popover {
+  z-index: 10000 !important;
+}
+
+.driver-overlay {
+  z-index: 9999 !important;
+}
+
+/* Custom emoji styling in titles */
+.driver-popover-title::first-letter {
+  font-size: 1.2em !important;
+}

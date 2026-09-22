@@ -623,10 +623,11 @@ class SupabaseClient:
         List simulation history for a business profile.
         Returns scenarios with their simulation results, reports, and agent events.
         """
-        # First get scenarios for this profile
+        # First get scenarios for this profile (exclude soft-deleted ones)
         url = f"{self.base_url}/rest/v1/scenarios"
         params = {
             "profile_id": f"eq.{profile_id}",
+            "deleted": "eq.false",  # Filter out soft-deleted scenarios
             "select": "scenario_id,scenario_name,scenario_type,description,parameters,created_at",
             "order": "created_at.desc",
             "limit": "50",
@@ -640,11 +641,12 @@ class SupabaseClient:
         if not scenarios:
             return []
 
-        # Get simulations for these scenarios
+        # Get simulations for these scenarios (exclude soft-deleted ones)
         scenario_ids = [s['scenario_id'] for s in scenarios]
         sim_url = f"{self.base_url}/rest/v1/simulations"
         sim_params = {
             "scenario_id": f"in.({','.join(scenario_ids)})",
+            "deleted": "eq.false",  # Filter out soft-deleted simulations
             "select": "simulation_id,scenario_id,status,agent_count,completed_at,created_at",
             "order": "completed_at.desc",
         }
@@ -750,7 +752,35 @@ class SupabaseClient:
         return history
 
     async def delete_simulation(self, simulation_id: str) -> bool:
-        """Delete a simulation and all its related data (cascade order)."""
+        """
+        Soft delete a simulation (marks as deleted instead of removing data).
+        Preserves audit trail while hiding from normal queries.
+        """
+        from datetime import datetime
+        
+        update_headers = {**self.headers, 'Prefer': 'return=minimal'}
+        async with aiohttp.ClientSession() as session:
+            # Mark simulation as deleted
+            async with session.patch(
+                f"{self.base_url}/rest/v1/simulations",
+                params={"simulation_id": f"eq.{simulation_id}"},
+                headers=update_headers,
+                json={
+                    "deleted": True,
+                    "deleted_at": datetime.utcnow().isoformat()
+                },
+            ) as response:
+                if response.status not in [200, 204]:
+                    print(f"[ERROR] Failed to soft delete simulation {simulation_id}: {response.status}")
+                    return False
+            
+            return True
+    
+    async def delete_simulation_permanent(self, simulation_id: str) -> bool:
+        """
+        PERMANENTLY delete a simulation and all its related data (cascade order).
+        WARNING: This is irreversible. Use soft delete (delete_simulation) instead for normal operations.
+        """
         delete_headers = {**self.headers, 'Prefer': 'return=minimal'}
         async with aiohttp.ClientSession() as session:
             # 1. Get scenario_id before deleting (to clean up orphaned scenario)

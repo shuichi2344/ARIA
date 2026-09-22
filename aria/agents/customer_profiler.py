@@ -89,8 +89,10 @@ Return the JSON now:"""
             temperature=0.3  # Lower temperature for more consistent output
         )
         
-        # Extract response text
+        # Extract response text and log provider
+        provider_used = response.get('provider', 'unknown')
         response_text = response.get("response", "").strip()
+        print(f"   [OK] LLM response from {provider_used}")
         
         # Debug: Check if response is empty
         if not response_text:

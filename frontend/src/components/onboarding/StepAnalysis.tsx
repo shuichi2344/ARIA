@@ -267,7 +267,7 @@ export default function StepAnalysis({ data, update, onNext, onBack }: Props) {
             {profile.b2c_profile && (
               <ProfileRow label={profile.customer_type === 'HYBRID' ? "Consumer Profile (B2C)" : "Consumer Profile (B2C)"}>
                 <div style={{ display:'grid', gap:'0.5rem' }}>
-                  <Detail label={profile.customer_type === 'HYBRID' ? "Avg Transaction/Customer" : "Avg Transaction"} value={`RM ${profile.b2c_profile.avg_transaction_rm || '—'}`} />
+                  <Detail label={profile.customer_type === 'HYBRID' ? "Avg Revenue/Customer" : "Avg Revenue per Customer"} value={`RM ${profile.b2c_profile.avg_transaction_rm || '—'}`} />
                 </div>
               </ProfileRow>
             )}
@@ -280,7 +280,7 @@ export default function StepAnalysis({ data, update, onNext, onBack }: Props) {
                   )}
                   <Detail label="Target Customer Size" value={profile.b2b_profile.business_size?.join(', ') || '—'} />
                   <Detail label={profile.customer_type === 'HYBRID' ? "Business Purchase Frequency" : "Purchase Frequency"} value={profile.b2b_profile.purchase_frequency || '—'} />
-                  <Detail label={profile.customer_type === 'HYBRID' ? "Avg Transaction/Business" : "Avg Transaction/Order"} value={`RM ${profile.b2b_profile.avg_transaction_rm || 0}`} />
+                  <Detail label={profile.customer_type === 'HYBRID' ? "Avg Revenue/Business" : "Avg Revenue per Order"} value={`RM ${profile.b2b_profile.avg_transaction_rm || 0}`} />
                   {(profile.b2b_profile as any)?.decision_factors && (
                     <Detail label="Decision Factors" value={(profile.b2b_profile as any).decision_factors.join(', ')} />
                   )}
@@ -364,16 +364,16 @@ export default function StepAnalysis({ data, update, onNext, onBack }: Props) {
           {/* B2C fields */}
           {showB2C && (
             <>
-              <EditField label={showB2B ? "Avg Transaction per Customer (RM)" : "Avg Transaction per Visit (RM)"}>
+              <EditField label={showB2B ? "Avg Revenue per Customer (RM)" : "Avg Revenue per Customer (RM)"}>
                 <input
                   type="number"
                   min={0}
                   value={draft.b2c_avg_transaction}
                   onChange={e => patchDraft({ b2c_avg_transaction: e.target.value })}
-                  placeholder="e.g., 15"
+                  placeholder="e.g., 150"
                   style={S.input}
                 />
-                <span style={S.helpText}>Average amount an individual customer spends per visit</span>
+                <span style={S.helpText}>Average amount per customer (per visit for retail, monthly for subscriptions, etc.)</span>
               </EditField>
             </>
           )}
@@ -390,7 +390,7 @@ export default function StepAnalysis({ data, update, onNext, onBack }: Props) {
                 </div>
               </EditField>
 
-              <EditField label={showB2C ? "Avg Transaction per Business (RM)" : "Avg Transaction per Order (RM)"}>
+              <EditField label={showB2C ? "Avg Revenue per Business (RM)" : "Avg Revenue per Order (RM)"}>
                 <input
                   type="number"
                   min={0}
@@ -399,7 +399,7 @@ export default function StepAnalysis({ data, update, onNext, onBack }: Props) {
                   placeholder="e.g., 500"
                   style={S.input}
                 />
-                <span style={S.helpText}>Average amount a business customer spends per order</span>
+                <span style={S.helpText}>Average order value or monthly contract value</span>
               </EditField>
 
               <EditField label={showB2C ? "Business Purchase Frequency" : "Purchase Frequency"}>

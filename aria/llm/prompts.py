@@ -124,6 +124,7 @@ def scenario_suggestion_with_context(
     news_articles: List[Dict[str, Any]],
     economic_indicators: Dict[str, Any],
     holiday_context: str = "",
+    simulation_settings: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Generate prompt for suggesting scenarios with real-world context.
@@ -135,9 +136,43 @@ Business Profile:
 {_format_dict(business_profile)}
 
 User Question: "{user_question}"
-
-Real-World Context:
 """
+
+    # Add simulation settings if provided
+    if simulation_settings:
+        prompt += "\nSimulation Configuration:\n"
+        prompt += "The scenarios you suggest will be simulated with the following customer segments:\n"
+        
+        if simulation_settings.get("income_levels"):
+            prompt += f"- Income Levels: {', '.join(simulation_settings['income_levels'])}\n"
+        
+        if simulation_settings.get("age_groups"):
+            prompt += f"- Age Groups: {', '.join(simulation_settings['age_groups'])}\n"
+        
+        # Extract B2B constraints from business profile (not simulation_settings)
+        # These are the source of truth for target customers
+        b2b_profile = business_profile.get("b2b_profile", {})
+        target_business_types = b2b_profile.get("target_business_types", [])
+        business_sizes = b2b_profile.get("business_size", [])
+        
+        # Also check for legacy field names in simulation_settings for backward compatibility
+        if not target_business_types and simulation_settings.get("target_customer_types"):
+            target_business_types = simulation_settings["target_customer_types"]
+        if not business_sizes and simulation_settings.get("business_sizes"):
+            business_sizes = simulation_settings["business_sizes"]
+        
+        if target_business_types:
+            prompt += f"- Target Customer Types (B2B): {', '.join(target_business_types)}\n"
+        
+        if business_sizes:
+            prompt += f"- Business Sizes (B2B): {', '.join(business_sizes)}\n"
+        
+        prompt += "\nIMPORTANT: Your scenario suggestions MUST be relevant to these customer segments. "
+        prompt += "For example, do NOT suggest B40-focused promotions for a business targeting only T20 customers, "
+        prompt += "and do NOT suggest strategies for young customers if the business only targets seniors.\n"
+
+    prompt += "\nReal-World Context:\n"
+    
     if news_articles:
         prompt += "\nRecent News:\n"
         for i, article in enumerate(news_articles[:3], 1):

@@ -80,7 +80,7 @@ export default function OnboardingFlow() {
   function back() { setStep(s => Math.max(s - 1, 1)) }
 
   function finish() {
-    router.push('/dashboard')
+    router.push(isEditMode ? '/dashboard' : '/dashboard?welcome=1')
   }
 
   function handleLogout() {

@@ -92,6 +92,18 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   })
   if (!res.ok) {
     const text = await res.text()
+    
+    // Check for beta access expiration
+    if (res.status === 403 && text.includes('BETA_ACCESS_EXPIRED')) {
+      // Clear local session storage
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('aria_session')
+        // Redirect to error page with beta expiry message
+        window.location.replace('/auth/error?reason=beta_expired')
+      }
+      throw new Error('BETA_ACCESS_EXPIRED')
+    }
+    
     throw new Error(`API ${res.status}: ${text}`)
   }
   return res.json() as Promise<T>

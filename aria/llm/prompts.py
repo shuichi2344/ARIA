@@ -294,6 +294,3 @@ def _format_dict(data: Dict[str, Any], indent: int = 0) -> str:
     return "\n".join(lines)
 
 
-def _format_list(items: List[str]) -> str:
-    """Format list for prompt display."""
-    return "\n".join(f"- {item}" for item in items)

@@ -41,8 +41,9 @@ class CustomerAgent(mesa.Agent):
         self.economic_context = economic_context
         
         # Agent identity
-        self.income_level: str = archetype.get('income_level', 'M40')
-        self.age_range: str = archetype.get('age_range', '25-34')
+        # For tourists, income_level and age_range may be None
+        self.income_level: Optional[str] = archetype.get('income_level')
+        self.age_range: Optional[str] = archetype.get('age_range')
         self.profile_text: str = ""  # Set after LLM profile generation
         self.personality_type: str = "customer"
         
@@ -60,10 +61,15 @@ class CustomerAgent(mesa.Agent):
     def get_peer_messages(self) -> List[str]:
         """
         Get reasoning from same-income peers who already decided.
+        For tourists (no income level), skip peer influence.
         
         Returns:
             List of peer reasoning strings
         """
+        # Skip peer influence for tourists (no income level)
+        if self.income_level is None:
+            return []
+        
         peers = [
             agent for agent in self.model.agents_list
             if agent.unique_id != self.unique_id

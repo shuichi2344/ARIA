@@ -156,9 +156,13 @@ export default function SimulationSettings({ district, disabled, onSettingsChang
 
   // Notify parent
   useEffect(() => {
+    // Check if ONLY "tourist" is selected (and no other non-tourist segments)
+    const onlyTourist = targetCustomerConstraints.length > 0 && 
+      targetCustomerConstraints.every(segment => segment.toLowerCase().includes('tourist'))
+    
     onSettingsChange({
-      incomeConstraints,
-      ageConstraints,
+      incomeConstraints: onlyTourist ? [] : incomeConstraints,
+      ageConstraints: onlyTourist ? [] : ageConstraints,
       agentCount,
       simulationMode,
       targetCustomerConstraints,
@@ -306,6 +310,15 @@ export default function SimulationSettings({ district, disabled, onSettingsChang
 
   // ─── HYBRID Settings ───
   if (isHybrid) {
+    // Check if tourist is included at all
+    const hasTourist = targetCustomerConstraints.some(
+      segment => segment.toLowerCase().includes('tourist')
+    )
+    
+    // Check if ONLY tourist is selected
+    const onlyTourist = targetCustomerConstraints.length > 0 && 
+      targetCustomerConstraints.every(segment => segment.toLowerCase().includes('tourist'))
+    
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', padding: '0.75rem', background: 'var(--gray-50)', borderRadius: 8, border: '1px solid var(--gray-200)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.78rem', fontWeight: 700, color: 'var(--gray-700)' }}>
@@ -352,7 +365,28 @@ export default function SimulationSettings({ district, disabled, onSettingsChang
         <div style={{ padding: '0.5rem', background: 'white', borderRadius: 6, border: '1px solid var(--gray-200)' }}>
           <p style={{ margin: '0 0 0.3rem', fontSize: '0.7rem', fontWeight: 700, color: 'var(--gray-600)' }}>👤 B2C Customers</p>
           {availableTargetSegments.length > 0 && renderTargetCustomers('Target Segments', availableTargetSegments, true)}
-          {demographics && (
+          
+          {/* Show info message whenever tourist is included */}
+          {hasTourist && (
+            <div style={{
+              padding: '0.5rem 0.625rem',
+              marginTop: '0.3rem',
+              background: onlyTourist ? '#fffbeb' : '#eff6ff',
+              border: onlyTourist ? '1px solid #fde68a' : '1px solid #bfdbfe',
+              borderRadius: '6px',
+              fontSize: '0.72rem',
+              color: onlyTourist ? '#92400e' : '#1e40af',
+              lineHeight: 1.4,
+            }}>
+              {onlyTourist ? (
+                <>ℹ️ <strong>Tourist-only mode:</strong> Income and age filters are not applicable. Add other customer types to enable demographic filtering.</>
+              ) : (
+                <>ℹ️ <strong>Note:</strong> Income and age filters will only apply to non-tourist customer segments. Tourist demographics are not filtered.</>
+              )}
+            </div>
+          )}
+          
+          {demographics && !onlyTourist && (
             <>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', marginTop: '0.3rem' }}>
                 <p style={{ margin: 0, fontSize: '0.7rem', fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Income</p>
@@ -397,6 +431,15 @@ export default function SimulationSettings({ district, disabled, onSettingsChang
     )
   }
 
+  // Check if tourist is included at all
+  const hasTourist = targetCustomerConstraints.some(
+    segment => segment.toLowerCase().includes('tourist')
+  )
+  
+  // Check if ONLY tourist is selected
+  const onlyTourist = targetCustomerConstraints.length > 0 && 
+    targetCustomerConstraints.every(segment => segment.toLowerCase().includes('tourist'))
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', padding: '0.75rem', background: 'var(--gray-50)', borderRadius: 8, border: '1px solid var(--gray-200)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.78rem', fontWeight: 700, color: 'var(--gray-700)' }}>
@@ -406,33 +449,56 @@ export default function SimulationSettings({ district, disabled, onSettingsChang
       {/* Target Customers for B2C */}
       {availableTargetSegments.length > 0 && renderTargetCustomers('Target Customers', availableTargetSegments)}
 
-      {/* Income */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-        <p style={{ margin: 0, fontSize: '0.7rem', fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Income Levels</p>
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          {Object.entries(demographics.income_distribution).map(([level, info]) => (
-            <label key={level} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', cursor: disabled ? 'not-allowed' : 'pointer', opacity: incomeConstraints.includes(level) ? 1 : 0.5 }}>
-              <input type="checkbox" checked={incomeConstraints.includes(level)} onChange={() => handleToggle(setIncomeConstraints, level, 'At least one income level is required')} disabled={disabled} style={{ margin: 0 }} />
-              <span style={{ fontWeight: 600 }}>{level}</span>
-              <span style={{ color: 'var(--gray-500)' }}>{info.percentage.toFixed(1)}%</span>
-            </label>
-          ))}
+      {/* Show info message whenever tourist is included */}
+      {hasTourist && (
+        <div style={{
+          padding: '0.5rem 0.625rem',
+          background: onlyTourist ? '#fffbeb' : '#eff6ff',
+          border: onlyTourist ? '1px solid #fde68a' : '1px solid #bfdbfe',
+          borderRadius: '6px',
+          fontSize: '0.72rem',
+          color: onlyTourist ? '#92400e' : '#1e40af',
+          lineHeight: 1.4,
+        }}>
+          {onlyTourist ? (
+            <>ℹ️ <strong>Tourist-only mode:</strong> Income and age filters are not applicable. Add other customer types to enable demographic filtering.</>
+          ) : (
+            <>ℹ️ <strong>Note:</strong> Income and age filters will only apply to non-tourist customer segments. Tourist demographics are not filtered.</>
+          )}
         </div>
-      </div>
+      )}
 
-      {/* Age */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-        <p style={{ margin: 0, fontSize: '0.7rem', fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Age Groups</p>
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          {Object.entries(demographics.age_distribution).map(([group, info]) => (
-            <label key={group} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', cursor: disabled ? 'not-allowed' : 'pointer', opacity: ageConstraints.includes(group) ? 1 : 0.5 }}>
-              <input type="checkbox" checked={ageConstraints.includes(group)} onChange={() => handleToggle(setAgeConstraints, group, 'At least one age group is required')} disabled={disabled} style={{ margin: 0 }} />
-              <span style={{ fontWeight: 600 }}>{group}</span>
-              <span style={{ color: 'var(--gray-500)' }}>{info.percentage.toFixed(1)}%</span>
-            </label>
-          ))}
+      {/* Income - hidden if ONLY tourist */}
+      {!onlyTourist && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+          <p style={{ margin: 0, fontSize: '0.7rem', fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Income Levels</p>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            {Object.entries(demographics.income_distribution).map(([level, info]) => (
+              <label key={level} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', cursor: disabled ? 'not-allowed' : 'pointer', opacity: incomeConstraints.includes(level) ? 1 : 0.5 }}>
+                <input type="checkbox" checked={incomeConstraints.includes(level)} onChange={() => handleToggle(setIncomeConstraints, level, 'At least one income level is required')} disabled={disabled} style={{ margin: 0 }} />
+                <span style={{ fontWeight: 600 }}>{level}</span>
+                <span style={{ color: 'var(--gray-500)' }}>{info.percentage.toFixed(1)}%</span>
+              </label>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Age - hidden if ONLY tourist */}
+      {!onlyTourist && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+          <p style={{ margin: 0, fontSize: '0.7rem', fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Age Groups</p>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            {Object.entries(demographics.age_distribution).map(([group, info]) => (
+              <label key={group} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', cursor: disabled ? 'not-allowed' : 'pointer', opacity: ageConstraints.includes(group) ? 1 : 0.5 }}>
+                <input type="checkbox" checked={ageConstraints.includes(group)} onChange={() => handleToggle(setAgeConstraints, group, 'At least one age group is required')} disabled={disabled} style={{ margin: 0 }} />
+                <span style={{ fontWeight: 600 }}>{group}</span>
+                <span style={{ color: 'var(--gray-500)' }}>{info.percentage.toFixed(1)}%</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
 
       {validationMsg && <p style={{ margin: 0, fontSize: '0.7rem', color: '#ef4444', fontStyle: 'italic' }} role="alert">{validationMsg}</p>}
       {renderSimulationMode()}

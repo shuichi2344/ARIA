@@ -68,10 +68,18 @@ class SyntheticPopulationGenerator:
         logger.info(f"Generating synthetic population of {count} agents")
         logger.info(f"Business: {business_profile.get('name', 'Unknown')} at {business_profile.get('location', 'Unknown')}")
         
-        if income_constraints:
-            logger.info(f"Income constraints: {income_constraints}")
-        if age_constraints:
-            logger.info(f"Age constraints: {age_constraints}")
+        # Check if this is a tourist-only scenario (no income/age constraints)
+        # When constraints are empty lists or None, it typically means tourists
+        is_tourist_only = (not income_constraints or len(income_constraints) == 0) and \
+                         (not age_constraints or len(age_constraints) == 0)
+        
+        if is_tourist_only:
+            logger.info("Tourist-only mode detected (no demographic constraints)")
+        else:
+            if income_constraints:
+                logger.info(f"Income constraints: {income_constraints}")
+            if age_constraints:
+                logger.info(f"Age constraints: {age_constraints}")
         
         # Fetch demographics for business location
         location = business_profile.get("location", "Timur Laut")
@@ -79,6 +87,27 @@ class SyntheticPopulationGenerator:
         demographics = await self.dosm_client.get_demographics(district)
         
         logger.info(f"Using demographics for district: {district}")
+        
+        # If tourist-only, skip IPF and create simple agents without demographics
+        if is_tourist_only:
+            logger.info("Skipping IPF for tourist-only scenario")
+            agents = [
+                {
+                    "persona_name": f"Agent {i + 1}",
+                    "income_level": None,  # No income level for tourists
+                    "age_range": None,     # No age range for tourists
+                    "monthly_income_rm": None,  # No income data for tourists
+                }
+                for i in range(count)
+            ]
+            return {
+                "agents": agents,
+                "convergence_report": None,
+                "validation_report": None,
+                "district": district,
+                "source": demographics.get("source", "Unknown"),
+                "method_used": "tourist_only"
+            }
         
         # Extract marginal distributions
         age_marginals = self._extract_age_marginals(demographics, age_constraints)

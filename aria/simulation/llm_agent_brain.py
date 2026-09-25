@@ -144,15 +144,20 @@ class LLMAgentBrain:
         # Build agent list for prompt
         agent_specs = []
         for i, agent in enumerate(agents):
-            income_level = agent.get('income_level', 'M40')
-            age_range = agent.get('age_range', '25-34')
+            income_level = agent.get('income_level')
+            age_range = agent.get('age_range')
             assigned_type = assigned_personalities[i] if assigned_personalities and i < len(assigned_personalities) else None
             
-            income_desc = self.INCOME_DESCRIPTIONS.get(income_level, self.INCOME_DESCRIPTIONS["M40"])
-            
-            agent_spec = f"Agent {i+1}: {age_range} years old, {income_level} income"
-            if assigned_type:
-                agent_spec += f", must be a {assigned_type}"
+            # For tourists or agents without demographics, skip income/age in spec
+            if income_level is None or age_range is None:
+                agent_spec = f"Agent {i+1}"
+                if assigned_type:
+                    agent_spec += f": must be a {assigned_type}"
+            else:
+                income_desc = self.INCOME_DESCRIPTIONS.get(income_level, self.INCOME_DESCRIPTIONS["M40"])
+                agent_spec = f"Agent {i+1}: {age_range} years old, {income_level} income"
+                if assigned_type:
+                    agent_spec += f", must be a {assigned_type}"
             
             agent_specs.append(agent_spec)
         
@@ -273,10 +278,21 @@ Now generate the complete JSON array for all {len(agents)} agents:"""
     
     def _get_fallback_personality(self, agent: Dict, assigned_type: Optional[str]) -> str:
         """Generate a basic fallback personality when parsing fails."""
-        income = agent.get('income_level', 'M40')
-        age = agent.get('age_range', '25-34')
+        income = agent.get('income_level')
+        age = agent.get('age_range')
         customer_type = assigned_type or 'regular customer'
         
+        # For tourists (no demographics), create simpler personality
+        if income is None or age is None:
+            return _format_structured_personality(
+                customer_type=customer_type,
+                visit_frequency="visiting temporarily",
+                values="quality experience and memorable moments",
+                spending_habit="spending varies based on trip budget",
+                loyalty_factor="unlikely to return as a tourist, but may recommend to others"
+            )
+        
+        # For regular customers with demographics
         return _format_structured_personality(
             customer_type=f"{customer_type} in {age} age range",
             visit_frequency="regularly visits",

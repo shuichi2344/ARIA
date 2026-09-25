@@ -402,24 +402,11 @@ export default function ResetPasswordPage() {
               borderRadius: 8, color: '#166534',
               fontSize: '0.9rem', textAlign: 'center', width: '100%',
             }}>
-              <strong>Password reset successfully!</strong>
+              <strong>Password updated successfully.</strong>
               <p style={{ margin: '0.4rem 0 0', fontSize: '0.82rem' }}>
-                You can now sign in with your new password.
+                You may now close this page.
               </p>
             </div>
-            <button
-              onClick={() => router.push('/?auth=login')}
-              style={{
-                width: '100%',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
-                background: 'var(--accent, #7c2d3e)', color: '#fff',
-                fontWeight: 600, fontSize: '1rem',
-                padding: '0.9rem', border: 'none', borderRadius: 8,
-                cursor: 'pointer', boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
-              }}
-            >
-              Go to Sign In <ArrowRight style={{ width: 18, height: 18 }} />
-            </button>
           </div>
         )}
       </div>

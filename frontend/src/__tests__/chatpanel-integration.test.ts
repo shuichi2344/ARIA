@@ -169,6 +169,10 @@ describe('ChatPanel Integration: Constraints in simulation start payload', () =>
         incomeConstraints: ['B40', 'M40', 'T20'],
         ageConstraints: [...ALL_AGE_GROUPS],
         agentCount: 25,
+        simulationMode: 'balanced',
+        targetCustomerConstraints: [],
+        businessSizeConstraints: [],
+        b2bPercentage: null,
       }
       expect(computeIncomeConstraints(settings)).toBeNull()
     })
@@ -178,6 +182,10 @@ describe('ChatPanel Integration: Constraints in simulation start payload', () =>
         incomeConstraints: ['M40', 'T20'],
         ageConstraints: [...ALL_AGE_GROUPS],
         agentCount: 25,
+        simulationMode: 'balanced',
+        targetCustomerConstraints: [],
+        businessSizeConstraints: [],
+        b2bPercentage: null,
       }
       expect(computeIncomeConstraints(settings)).toEqual(['M40', 'T20'])
     })
@@ -187,6 +195,10 @@ describe('ChatPanel Integration: Constraints in simulation start payload', () =>
         incomeConstraints: ['B40'],
         ageConstraints: [...ALL_AGE_GROUPS],
         agentCount: 30,
+        simulationMode: 'balanced',
+        targetCustomerConstraints: [],
+        businessSizeConstraints: [],
+        b2bPercentage: null,
       }
       expect(computeIncomeConstraints(settings)).toEqual(['B40'])
     })
@@ -207,6 +219,10 @@ describe('ChatPanel Integration: Constraints in simulation start payload', () =>
         incomeConstraints: [...ALL_INCOME_LEVELS],
         ageConstraints: ['20-29', '30-39', '40-49', '50-59', '60+'],
         agentCount: 25,
+        simulationMode: 'balanced',
+        targetCustomerConstraints: [],
+        businessSizeConstraints: [],
+        b2bPercentage: null,
       }
       expect(computeAgeConstraints(settings)).toBeNull()
     })
@@ -216,6 +232,10 @@ describe('ChatPanel Integration: Constraints in simulation start payload', () =>
         incomeConstraints: [...ALL_INCOME_LEVELS],
         ageConstraints: ['20-29', '30-39', '40-49'],
         agentCount: 25,
+        simulationMode: 'balanced',
+        targetCustomerConstraints: [],
+        businessSizeConstraints: [],
+        b2bPercentage: null,
       }
       expect(computeAgeConstraints(settings)).toEqual(['20-29', '30-39', '40-49'])
     })
@@ -225,6 +245,10 @@ describe('ChatPanel Integration: Constraints in simulation start payload', () =>
         incomeConstraints: [...ALL_INCOME_LEVELS],
         ageConstraints: ['30-39'],
         agentCount: 50,
+        simulationMode: 'balanced',
+        targetCustomerConstraints: [],
+        businessSizeConstraints: [],
+        b2bPercentage: null,
       }
       expect(computeAgeConstraints(settings)).toEqual(['30-39'])
     })
@@ -239,6 +263,10 @@ describe('ChatPanel Integration: Constraints in simulation start payload', () =>
         incomeConstraints: ['B40', 'M40', 'T20'],
         ageConstraints: ['20-29', '30-39', '40-49', '50-59', '60+'],
         agentCount: 25,
+        simulationMode: 'balanced',
+        targetCustomerConstraints: [],
+        businessSizeConstraints: [],
+        b2bPercentage: null,
       }
       expect(computeIncomeConstraints(settings)).toBeNull()
       expect(computeAgeConstraints(settings)).toBeNull()
@@ -249,6 +277,10 @@ describe('ChatPanel Integration: Constraints in simulation start payload', () =>
         incomeConstraints: ['B40', 'M40'],
         ageConstraints: ['20-29', '30-39'],
         agentCount: 40,
+        simulationMode: 'balanced',
+        targetCustomerConstraints: [],
+        businessSizeConstraints: [],
+        b2bPercentage: null,
       }
       expect(computeIncomeConstraints(settings)).toEqual(['B40', 'M40'])
       expect(computeAgeConstraints(settings)).toEqual(['20-29', '30-39'])
@@ -259,6 +291,10 @@ describe('ChatPanel Integration: Constraints in simulation start payload', () =>
         incomeConstraints: ['B40', 'M40', 'T20'],
         ageConstraints: ['20-29', '30-39', '40-49'],
         agentCount: 25,
+        simulationMode: 'balanced',
+        targetCustomerConstraints: [],
+        businessSizeConstraints: [],
+        b2bPercentage: null,
       }
       expect(computeIncomeConstraints(settings)).toBeNull()
       expect(computeAgeConstraints(settings)).toEqual(['20-29', '30-39', '40-49'])

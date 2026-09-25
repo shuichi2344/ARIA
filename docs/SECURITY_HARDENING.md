@@ -70,7 +70,6 @@ All request body models now enforce:
 | Function | Purpose |
 |----------|---------|
 | `sanitize_text(text, max_length)` | Strip whitespace, remove null bytes, truncate |
-| `validate_uuid(value, field_name)` | Validate UUID v4 format, raise 400 if invalid |
 | `check_for_injection(text, field_name)` | Detect `<script>`, `javascript:`, `on*=` patterns |
 | `validate_email_format(email)` | RFC 5322 regex validation + normalization |
 

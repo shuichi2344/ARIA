@@ -4,7 +4,7 @@ import 'driver.js/dist/driver.css';
 import '@/styles/tutorial.css';
 
 const TUTORIAL_STORAGE_KEY = 'aria-tutorial-completed';
-const TUTORIAL_VERSION = 'v18'; // Increment this to force tutorial reset
+const TUTORIAL_VERSION = 'v19'; // Increment this to force tutorial reset
 
 // Log version on load for debugging
 console.log('[TUTORIAL] Loading version:', TUTORIAL_VERSION, 'at', new Date().toISOString());
@@ -16,16 +16,32 @@ export const TUTORIAL_DEMO_SCENARIO = 'aria-tutorial-demo-scenario';
 export const useTutorial = () => {
   const driverRef = useRef<ReturnType<typeof driver> | null>(null);
 
-  // Clean up old tutorial data on mount
+  // Clean up old tutorial data on mount and ensure version is set
   useEffect(() => {
     const completedVersion = localStorage.getItem('aria-tutorial-version');
+    const hasCompletedTutorial = localStorage.getItem(TUTORIAL_STORAGE_KEY);
+    
+    // If no version is set at all, set it now (first visit)
+    if (!completedVersion) {
+      console.log('[TUTORIAL] First visit detected - setting version:', TUTORIAL_VERSION);
+      localStorage.setItem('aria-tutorial-version', TUTORIAL_VERSION);
+    }
+    
     if (completedVersion && completedVersion !== TUTORIAL_VERSION) {
-      // Clear all old tutorial data
+      // Clear all old tutorial data if version changed
+      console.log('[TUTORIAL] Version mismatch - clearing old data. Old:', completedVersion, 'New:', TUTORIAL_VERSION);
       localStorage.removeItem(TUTORIAL_STORAGE_KEY);
       localStorage.removeItem(TUTORIAL_DEMO_READY);
       localStorage.removeItem(TUTORIAL_DEMO_SCENARIO);
       localStorage.setItem('aria-tutorial-version', TUTORIAL_VERSION);
     }
+    
+    // Log tutorial state for debugging
+    console.log('[TUTORIAL] Mount state:', {
+      hasCompleted: hasCompletedTutorial,
+      version: completedVersion || 'none',
+      expectedVersion: TUTORIAL_VERSION,
+    });
   }, []);
 
   const tutorialSteps: DriveStep[] = [
@@ -137,11 +153,11 @@ export const useTutorial = () => {
       localStorage.removeItem(TUTORIAL_DEMO_SCENARIO);
       window.dispatchEvent(new CustomEvent('tutorial-cleanup'));
     },
-    onDeselected: (element, step, options) => {
+    onDeselected: () => {
       // Completely prevent deselection - user must use buttons or X
       return false;
     },
-    onPopoverRender: (popover, options) => {
+    onPopoverRender: () => {
       // Prevent clicking outside to close
       const overlay = document.querySelector('.driver-overlay');
       if (overlay) {
@@ -166,10 +182,18 @@ export const useTutorial = () => {
     const hasCompletedTutorial = localStorage.getItem(TUTORIAL_STORAGE_KEY);
     const completedVersion = localStorage.getItem('aria-tutorial-version');
     
+    console.log('[TUTORIAL] startTutorial called', {
+      forceStart,
+      hasCompleted: hasCompletedTutorial,
+      version: completedVersion,
+      shouldStart: !hasCompletedTutorial || forceStart,
+    });
+    
     // Force restart if version mismatch
     const needsRestart = hasCompletedTutorial && completedVersion !== TUTORIAL_VERSION;
     
     if (!hasCompletedTutorial || forceStart || needsRestart) {
+      console.log('[TUTORIAL] Starting tutorial...', { forceStart, needsRestart });
       
       // Clear any previous demo flags
       localStorage.removeItem(TUTORIAL_DEMO_READY);
@@ -235,7 +259,7 @@ export const useTutorial = () => {
       driverRef.current = driver({
         ...driverConfig,
         steps: availableSteps,
-        onHighlightStarted: (element, step, options) => {
+        onHighlightStarted: () => {
           const currentIndex = driverRef.current?.getActiveIndex();
           const currentStep = availableSteps[currentIndex ?? 0];
           
@@ -265,19 +289,37 @@ export const useTutorial = () => {
       });
 
       driverRef.current.drive();
+      console.log('[TUTORIAL] Tutorial started with', availableSteps.length, 'steps');
       }, 500); // Increased delay for demo card to render
       }, 100); // Check after 100ms
     } else {
-      // Tutorial already completed, skip
+      console.log('[TUTORIAL] Tutorial already completed, skipping');
     }
   }, []); // Empty deps - function should be stable
 
   const resetTutorial = useCallback(() => {
+    console.log('[TUTORIAL] Resetting tutorial manually');
     localStorage.removeItem(TUTORIAL_STORAGE_KEY);
+    localStorage.removeItem('aria-tutorial-version');
     localStorage.removeItem(TUTORIAL_DEMO_READY);
     localStorage.removeItem(TUTORIAL_DEMO_SCENARIO);
     startTutorial(true);
   }, [startTutorial]);
+
+  // Expose reset function globally for easy testing
+  useEffect(() => {
+    (window as any).resetTutorial = () => {
+      console.log('[TUTORIAL] Global reset called');
+      localStorage.removeItem(TUTORIAL_STORAGE_KEY);
+      localStorage.removeItem('aria-tutorial-version');
+      localStorage.removeItem(TUTORIAL_DEMO_READY);
+      localStorage.removeItem(TUTORIAL_DEMO_SCENARIO);
+      window.location.reload();
+    };
+    return () => {
+      delete (window as any).resetTutorial;
+    };
+  }, []);
 
   // Function to advance tutorial to next simulation-related step
   const advanceToSimulationStep = useCallback((stepType: 'running' | 'monte-carlo' | 'convergence' | 'results') => {
@@ -382,7 +424,5 @@ export const useTutorial = () => {
     startTutorial,
     resetTutorial,
     advanceToSimulationStep,
-    hasCompletedTutorial: !!localStorage.getItem(TUTORIAL_STORAGE_KEY),
-    isDemoReady: !!localStorage.getItem(TUTORIAL_DEMO_READY),
   };
 };

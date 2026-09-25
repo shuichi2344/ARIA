@@ -21,7 +21,6 @@ from aria.api.security import (
     rate_limit_exceeded_handler,
     SecurityHeadersMiddleware,
     sanitize_text,
-    validate_uuid,
     check_for_injection,
     validate_email_format,
     get_current_user,
@@ -29,7 +28,6 @@ from aria.api.security import (
     FORGOT_PASSWORD_RATE_LIMIT,
     SIMULATION_RATE_LIMIT,
     SUGGEST_RATE_LIMIT,
-    GENERAL_RATE_LIMIT,
 )
 from slowapi.errors import RateLimitExceeded
 
@@ -48,6 +46,63 @@ logging.getLogger('aria.external.news_api').setLevel(logging.INFO)
 logging.getLogger('aria.external.dosm').setLevel(logging.INFO)
 
 logger = logging.getLogger(__name__)
+
+
+def _iso_timestamp(value: Any) -> Optional[str]:
+    """Return an Auth metadata timestamp as a timezone-aware ISO string."""
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            logger.warning("Ignoring malformed beta access expiry timestamp")
+            return None
+    else:
+        return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+def _report_decision(agent: Any) -> str:
+    """Return one of the report's three outcomes for every simulated customer."""
+    decision = getattr(agent, "last_decision", None)
+    if decision in ("visit", "skip", "churn"):
+        return decision
+    if not getattr(agent, "is_active", True):
+        return "churn"
+    return "visit" if getattr(agent, "visited_this_week", False) else "skip"
+
+
+def _report_group(agent: Any, is_price_scenario: bool) -> str:
+    if is_price_scenario:
+        income_level = getattr(agent, "income_level", None)
+        if isinstance(income_level, str) and income_level.strip():
+            return income_level.strip()
+        if _is_tourist_persona(
+            getattr(agent, "personality_type", None),
+            getattr(agent, "profile_text", None),
+        ):
+            return "Tourist"
+        return "Unclassified"
+    personality = getattr(agent, "personality_type", None)
+    return personality.strip() if isinstance(personality, str) and personality.strip() else "Customer"
+
+
+def _report_percentages(counts: Dict[str, float]) -> Dict[str, float]:
+    """Round outcome percentages to tenths while preserving a 100% total."""
+    total = counts.get("total", 0)
+    outcomes = ("visit", "skip", "churn")
+    if total <= 0:
+        return {f"{key}_pct": 0.0 for key in outcomes}
+    exact = {key: max(0.0, counts.get(key, 0) / total * 1000) for key in outcomes}
+    tenths = {key: int(value) for key, value in exact.items()}
+    remaining = 1000 - sum(tenths.values())
+    for key in sorted(outcomes, key=lambda item: exact[item] - tenths[item], reverse=True)[:remaining]:
+        tenths[key] += 1
+    return {f"{key}_pct": tenths[key] / 10 for key in outcomes}
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -95,15 +150,13 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
 
-logger.info(f"CORS configured for: {allowed_origins}")
-
 # ---------------------------------------------------------------------------
-# Pydantic models — strict validation, reject unexpected fields (OWASP Input Validation)
+# Pydantic models
 # ---------------------------------------------------------------------------
 
 class UserRegister(BaseModel):
     """Registration request — email + strong password required."""
-    model_config = {"extra": "forbid"}  # Reject unexpected fields
+    model_config = {"extra": "forbid"}
     email: str = Field(..., min_length=3, max_length=254, description="Valid email address")
     password: str = Field(..., min_length=6, max_length=128, description="Strong password")
 
@@ -129,31 +182,28 @@ class UserResponse(BaseModel):
     id: str
     email: str
     created_at: datetime
+    beta_access_expires_at: Optional[str] = None
     access_token: Optional[str] = None
     refresh_token: Optional[str] = None
     email_confirmed: Optional[bool] = None
 
 
 class IncomeGroupInfo(BaseModel):
-    """Income group information with percentage and description."""
     percentage: float
     description: str
 
 
 class AgeGroupInfo(BaseModel):
-    """Age group information with percentage."""
     percentage: float
 
 
 class DemographicsResponse(BaseModel):
-    """Response model for district demographics endpoint."""
     district: str
     income_distribution: Dict[str, IncomeGroupInfo]
     age_distribution: Dict[str, AgeGroupInfo]
 
 
 class BusinessAnalyzeRequest(BaseModel):
-    """Request model for AI customer analysis only (no user_id needed)."""
     model_config = {"extra": "forbid"}
     business_name: str = Field(..., min_length=1, max_length=200)
     business_type: str = Field(..., min_length=1, max_length=200)
@@ -171,9 +221,8 @@ class BusinessAnalyzeRequest(BaseModel):
 
 
 class BusinessProfileCreate(BaseModel):
-    """Request model for creating and saving a business profile (user_id required)."""
     model_config = {"extra": "forbid"}
-    user_id: str = Field(..., min_length=1, max_length=100, description="ID of the authenticated user")
+    user_id: str = Field(..., min_length=1, max_length=100)
     business_name: str = Field(..., min_length=1, max_length=200)
     business_type: str = Field(..., min_length=1, max_length=200)
     business_category_id: Optional[str] = Field(None, max_length=100)
@@ -187,7 +236,6 @@ class BusinessProfileCreate(BaseModel):
 
 
 class CustomerProfileResponse(BaseModel):
-    """Response model for customer profile analysis."""
     customer_type: str
     target_customers: str = ""
     price_range: Optional[Dict[str, float]] = None
@@ -197,7 +245,6 @@ class CustomerProfileResponse(BaseModel):
 
 
 class BusinessProfileResponse(BaseModel):
-    """Response model for business profile."""
     id: str
     business_name: str
     business_type: str
@@ -209,17 +256,6 @@ class BusinessProfileResponse(BaseModel):
     price_range_max: Optional[float] = None
     customer_profile: Optional[Dict[str, Any]]
     created_at: datetime
-
-
-# Health check endpoint
-@app.get("/")
-async def root():
-    """Health check endpoint."""
-    return {
-        "status": "healthy",
-        "service": "ARIA API",
-        "version": "1.0.0"
-    }
 
 
 @app.get("/api/health")
@@ -238,6 +274,12 @@ async def health_check():
             "llm": "operational"  # Note: LLM health check not implemented (relies on Ollama/Ilmu AI external services)
         }
     }
+
+
+# Health check endpoint
+@app.get("/")
+async def root():
+    return {"status": "healthy", "service": "ARIA API", "version": "1.0.0"}
 
 
 # ---------------------------------------------------------------------------
@@ -317,29 +359,14 @@ async def get_holidays(state: str = "pulau-pinang", year: Optional[int] = None):
 # Auth endpoints
 # ---------------------------------------------------------------------------
 
-@app.post("/api/auth/register", response_model=UserResponse, status_code=201)
+@app.post("/api/auth/register")
 @limiter.limit(AUTH_RATE_LIMIT)
-async def register(request: Request, body: UserRegister):
-    """Register a new user account via Supabase Auth."""
-    is_valid, error_msg = validate_password_strength(body.password)
-    if not is_valid:
-        raise HTTPException(status_code=400, detail=error_msg)
-    try:
-        supabase_client = SupabaseClient()
-        user = await supabase_client.register_user(body.email, body.password)
-        return UserResponse(
-            id=user["id"],
-            email=user["email"],
-            created_at=datetime.fromisoformat(user["created_at"].replace("Z", "+00:00")),
-            access_token=user.get("access_token"),
-            refresh_token=user.get("refresh_token"),
-            email_confirmed=user.get("email_confirmed"),
-        )
-    except Exception as e:
-        if "EMAIL_TAKEN" in str(e):
-            raise HTTPException(status_code=409, detail="An account with this email already exists.")
-        print(f"[ERROR] Registration failed: {e}")
-        raise HTTPException(status_code=500, detail="Registration failed. Please try again.")
+async def register(request: Request):
+    """Public registration is disabled; new users must use an invitation link."""
+    raise HTTPException(
+        status_code=403,
+        detail="INVITATION_ONLY: Please use an invitation link to create an account.",
+    )
 
 
 @app.post("/api/auth/login", response_model=UserResponse)
@@ -349,19 +376,31 @@ async def login(request: Request, body: UserLogin):
     try:
         supabase_client = SupabaseClient()
         user = await supabase_client.login_user(body.email, body.password)
+        
+        # Check beta access expiration
+        is_valid = await supabase_client.check_beta_access(user["id"])
+        if not is_valid:
+            raise HTTPException(
+                status_code=403, 
+                detail="BETA_ACCESS_EXPIRED"
+            )
         return UserResponse(
             id=user["id"],
             email=user["email"],
             created_at=datetime.fromisoformat(user["created_at"].replace("Z", "+00:00")),
+            beta_access_expires_at=_iso_timestamp(user.get("beta_access_expires_at")),
             access_token=user.get("access_token"),
             refresh_token=user.get("refresh_token"),
+            email_confirmed=user.get("email_confirmed"),
         )
+    except HTTPException:
+        raise
     except Exception as e:
         if "INVALID_CREDENTIALS" in str(e):
             raise HTTPException(status_code=401, detail="Incorrect email or password.")
         if "EMAIL_NOT_CONFIRMED" in str(e):
             raise HTTPException(status_code=403, detail="EMAIL_NOT_CONFIRMED")
-        print(f"[ERROR] Login failed: {e}")
+        logger.exception("Login failed while validating the account or building the response")
         raise HTTPException(status_code=500, detail="Login failed. Please try again.")
 
 
@@ -401,6 +440,7 @@ async def change_password(
         raise HTTPException(status_code=500, detail="Failed to change password. Please try again.")
 
 
+
 class ForgotPasswordRequest(BaseModel):
     model_config = {"extra": "forbid"}
     email: str = Field(..., min_length=3, max_length=254)
@@ -417,18 +457,20 @@ async def forgot_password(request: Request, body: ForgotPasswordRequest):
     """
     Trigger Supabase Auth to send a password-reset email via Supabase SMTP.
     Always returns success to prevent email enumeration.
-    The reset link in the email contains a short-lived JWT that the frontend
-    must extract and pass to /api/auth/reset-password.
+    Supabase redirects the user to the frontend reset-password page, which
+    validates the recovery session and updates the password through Supabase Auth.
     """
     settings = get_settings()
-    reset_redirect = f"{settings.app_url}/auth/reset-password"
+    reset_redirect = f"{str(settings.app_url).rstrip('/')}/auth/reset-password"
 
     try:
         supabase_client = SupabaseClient()
-        await supabase_client.request_password_reset(
+        email_requested = await supabase_client.request_password_reset(
             email=body.email.strip().lower(),
             redirect_to=reset_redirect,
         )
+        if not email_requested:
+            logger.warning("Supabase did not accept the password reset email request")
     except Exception as e:
         logger.error(f"Forgot password error: {e}")
 
@@ -436,13 +478,84 @@ async def forgot_password(request: Request, body: ForgotPasswordRequest):
     return {"success": True, "message": "If an account with that email exists, a reset link has been sent."}
 
 
+class SetupPasswordRequest(BaseModel):
+    """Request model for invited users setting up their password."""
+    model_config = {"extra": "forbid"}
+    access_token: str = Field(..., min_length=1, description="JWT token from invitation email")
+    new_password: str = Field(..., min_length=6, max_length=128)
+    accepted_terms: bool = Field(..., description="User must accept T&C")
+
+    @field_validator("accepted_terms")
+    @classmethod
+    def validate_terms(cls, v: bool) -> bool:
+        if not v:
+            raise ValueError("You must accept the Terms & Conditions to continue")
+        return v
+
+
+@app.post("/api/auth/setup-password")
+@limiter.limit(AUTH_RATE_LIMIT)
+async def setup_password(request: Request, body: SetupPasswordRequest):
+    """
+    Set password for invited user and initialize beta access period.
+    This is called after a user clicks the Supabase invitation link.
+    
+    Flow:
+    1. Validate password strength
+    2. Update password using Supabase JWT
+    3. Set beta access expiration (7 days from now)
+    4. Record T&C acceptance
+    """
+    # Validate password strength
+    is_valid, error_msg = validate_password_strength(body.new_password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
+    
+    try:
+        supabase_client = SupabaseClient()
+        
+        await supabase_client.update_user_password(body.access_token, body.new_password)
+        from jose import jwt
+        payload = jwt.get_unverified_claims(body.access_token)
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="This link is not a valid invitation.")
+        
+        # Set beta access expiration (7 days from now)
+        await supabase_client.set_beta_access_expiration(user_id, days=7)
+
+        return {
+            "success": True,
+            "message": "Password set successfully. Your 7-day beta access period has started.",
+            "expires_in_days": 7
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Setup password failed: {e}")
+        if "invalid" in str(e).lower() or "expired" in str(e).lower():
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid or expired invitation link. Please request a new invitation."
+            )
+        raise HTTPException(status_code=500, detail="Failed to set password. Please try again.")
+
+
 @app.get("/api/auth/me", response_model=UserResponse)
 async def get_me(current_user: dict = Depends(get_current_user)):
-    """Get current user info from the JWT (no DB round-trip needed)."""
+    """Get current user info after Supabase Auth validates the JWT."""
+    created_at = current_user.get("created_at")
+    if isinstance(created_at, str):
+        created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    if not isinstance(created_at, datetime):
+        created_at = datetime.now(timezone.utc)
     return UserResponse(
         id=current_user["sub"],
         email=current_user.get("email", ""),
-        created_at=datetime.fromtimestamp(current_user.get("iat", 0), tz=timezone.utc),
+        created_at=created_at,
+        beta_access_expires_at=_iso_timestamp(
+            (current_user.get("user_metadata") or {}).get("beta_access_expires_at")
+        ),
     )
 
 
@@ -514,7 +627,7 @@ async def analyze_customer_profile(request: Request, business_data: BusinessAnal
 
 @app.post("/api/business/profile", response_model=BusinessProfileResponse)
 async def create_business_profile(
-    business_data: BusinessProfileCreate
+    business_data: BusinessProfileCreate,
 ):
     """
     Create a new business profile with AI-generated customer analysis.
@@ -704,7 +817,6 @@ async def save_chat_message(body: ChatMessageSave):
     """Save a chat message. Creates a session if session_id is not provided."""
     try:
         supabase = SupabaseClient()
-        
         session_id = body.session_id
         if not session_id:
             session_id = await supabase.create_chat_session(body.user_id, body.profile_id)
@@ -931,8 +1043,8 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
 
         # Use constraint fields from request body
         # B2C: income levels and age groups
-        income_levels = body.income_constraints or ["B40", "M40", "T20"]
-        age_groups = body.age_constraints or ["20-29", "30-39", "40-49", "50-59", "60+"]
+        income_levels = body.income_constraints if body.income_constraints is not None else ["B40", "M40", "T20"]
+        age_groups = body.age_constraints if body.age_constraints is not None else ["20-29", "30-39", "40-49", "50-59", "60+"]
         
         # B2B: target customer types and business sizes
         target_customer_constraints = body.target_customer_constraints
@@ -982,6 +1094,7 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
             # Store simulation state and kick off
             _active_sims[sim_id] = {
                 "sim_id":         sim_id,
+                
                 "scenario":       body.scenario,
                 "business_profile": business_profile_dict,
                 "profile_id":     body.profile_id,
@@ -1185,12 +1298,12 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
         print(f"✓ Created {len(agents)} complete agent objects")
         print(f"\n  Agent Distribution:")
         
-        # Show distribution
+        # Show distribution (handle None values for tourists)
         income_dist = {}
         age_dist = {}
         for agent in agents:
-            income = agent['income_level']
-            age = agent['age_range']
+            income = agent['income_level'] or 'Tourist (no income level)'
+            age = agent['age_range'] or 'Tourist (no age group)'
             income_dist[income] = income_dist.get(income, 0) + 1
             age_dist[age] = age_dist.get(age, 0) + 1
         
@@ -1226,6 +1339,7 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
         # Store simulation state
         _active_sims[sim_id] = {
             "sim_id":         sim_id,
+            
             "scenario":       body.scenario,
             "business_profile": business_profile_dict,
             "profile_id":     body.profile_id,
@@ -1334,29 +1448,13 @@ async def cancel_simulation(sim_id: str):
 
 
 @app.post("/api/simulation/cache/clear")
-async def clear_agent_cache(profile_id: Optional[str] = None):
-    """
-    Clear cached agent personalities.
-    Called when user starts a new chat or changes business profile/demographics.
-    
-    If profile_id is provided, only clears cache entries for that profile.
-    Otherwise clears all cached agents.
-    """
-    removed = 0
-    if profile_id:
-        # Cache keys are hashes that include profile_id, so clear all for this profile
-        keys_to_remove = [
-            key for key, cached in _agent_cache.items()
-        ]
-        for key in keys_to_remove:
-            del _agent_cache[key]
-        removed = len(keys_to_remove)
-        logger.info(f"Cleared agent cache for profile {profile_id} ({removed} entries)")
-    else:
-        removed = len(_agent_cache)
-        _agent_cache.clear()
-        logger.info(f"Cleared all agent cache ({removed} entries)")
-    return {"status": "cleared", "entries_removed": removed}
+async def clear_agent_cache():
+    """Clear cached agent personalities."""
+    global _agent_cache
+    count = len(_agent_cache)
+    _agent_cache.clear()
+    logger.info(f"Cleared agent cache ({count} entries)")
+    return {"status": "cleared", "entries_removed": count}
 
 
 # ---------------------------------------------------------------------------
@@ -1405,6 +1503,15 @@ def _extract_personality_type(profile_text: str) -> str:
         return 'senior'
     
     return 'customer'
+
+
+def _is_tourist_persona(*values: Optional[str]) -> bool:
+    """Return whether an assigned segment or generated profile describes a tourist."""
+    tourist_terms = ("tourist", "traveler", "traveller", "visitor", "passing through")
+    return any(
+        value and any(term in value.lower() for term in tourist_terms)
+        for value in values
+    )
 
 
 async def _run_simulation(sim_id: str):
@@ -1490,16 +1597,11 @@ async def _run_simulation_with_monte_carlo(sim_id: str):
         is_price_scenario = sim.get("_last_is_price_scenario", False)
         run_breakdown: Dict[str, Dict[str, int]] = {}
         for ma in mesa_agents_snapshot:
-            if is_price_scenario:
-                group = ma.income_level
-            else:
-                group = getattr(ma, 'personality_type', 'customer')
+            group = _report_group(ma, is_price_scenario)
             if group not in run_breakdown:
                 run_breakdown[group] = {"total": 0, "visit": 0, "skip": 0, "churn": 0}
             run_breakdown[group]["total"] += 1
-            decision = ma.last_decision or "visit"
-            if decision in run_breakdown[group]:
-                run_breakdown[group][decision] += 1
+            run_breakdown[group][_report_decision(ma)] += 1
         all_run_breakdowns.append(run_breakdown)
         
         # Extract metrics
@@ -1594,10 +1696,11 @@ async def _run_simulation_with_monte_carlo(sim_id: str):
                     averaged_breakdown[group] = {"total": 0.0, "visit": 0.0, "skip": 0.0, "churn": 0.0}
                 for key in ("total", "visit", "skip", "churn"):
                     averaged_breakdown[group][key] += counts.get(key, 0)
-        # Divide by number of runs to get averages
+        # Divide by number of runs to get averages. Keep fractional means so
+        # independently rounded counts cannot make category outcomes disappear.
         for group in averaged_breakdown:
             for key in ("total", "visit", "skip", "churn"):
-                averaged_breakdown[group][key] = round(averaged_breakdown[group][key] / num_runs)
+                averaged_breakdown[group][key] /= num_runs
         
         # Store averaged breakdown for _finalize_simulation to use
         sim["_averaged_breakdown"] = averaged_breakdown
@@ -1702,6 +1805,14 @@ async def _run_simulation_single(sim_id: str, run_number: int = 1) -> Dict[str, 
         else:
             assigned_personalities = [None] * len(agents)
             print(f"  No target segments set — LLM will generate freely")
+
+        # Tourists do not have local household income or age demographics.
+        # Clear these before the LLM builds each personality specification.
+        for agent, assigned in zip(agents, assigned_personalities):
+            if assigned and "tourist" in assigned.lower():
+                agent["income_level"] = None
+                agent["age_range"] = None
+                agent["monthly_income_rm"] = None
         
         # Generate all personalities in ONE batch call (faster & more reliable)
         print(f"  Generating all {len(agents)} personalities in one batch...")
@@ -1737,7 +1848,10 @@ async def _run_simulation_single(sim_id: str, run_number: int = 1) -> Dict[str, 
             # Last resort: use simple fallback for all
             for i, agent in enumerate(agents):
                 assigned = assigned_personalities[i] if i < len(assigned_personalities) else None
-                fallback = f"Customer type: {assigned or 'regular customer'}. Visits regularly. Values quality and convenience. Spending: moderate based on {agent['income_level']} income. Loyalty: compares alternatives occasionally."
+                if assigned and "tourist" in assigned.lower():
+                    fallback = "Customer type: tourist. Visiting temporarily and looking for a memorable experience. Spending depends on their trip budget. They may recommend the business to others but are unlikely to return soon."
+                else:
+                    fallback = f"Customer type: {assigned or 'regular customer'}. Visits regularly. Values quality and convenience. Spending: moderate based on {agent['income_level']} income. Loyalty: compares alternatives occasionally."
                 agents[i]['profile_text'] = fallback
                 agents[i]['personality'] = fallback
                 
@@ -1778,6 +1892,27 @@ async def _run_simulation_single(sim_id: str, run_number: int = 1) -> Dict[str, 
             }
             print(f"[INFO] 💾 Cached {len(agents)} agent personalities (key: {cache_key[:8]}...)")
     
+    # Remove household demographics whenever either the assigned segment or
+    # generated personality identifies an agent as a tourist. This also
+    # sanitizes agents restored from the in-memory personality cache.
+    for agent in agents:
+        if _is_tourist_persona(
+            agent.get("personality_type"),
+            agent.get("profile_text"),
+            agent.get("personality"),
+        ):
+            agent["income_level"] = None
+            agent["age_range"] = None
+            agent["monthly_income_rm"] = None
+            agent["personality_type"] = "tourist"
+            await q.put({
+                "type": "agent_demographics_cleared",
+                "data": {
+                    "agent_id": agent["agent_id"],
+                    "personality_type": "tourist",
+                },
+            })
+
     # ─── Create Mesa model and agents ───
     from aria.simulation.mesa_model import ARIAModel
     from aria.simulation.customer_agent import CustomerAgent
@@ -1815,9 +1950,10 @@ async def _run_simulation_single(sim_id: str, run_number: int = 1) -> Dict[str, 
     social_network: Dict[int, List[int]] = {a.unique_id: [] for a in mesa_agents}
     
     # Group agents by income level for weighted connection building
-    income_groups_map: Dict[str, List[int]] = {}
+    # Handle tourists (income_level = None) separately
+    income_groups_map: Dict[Optional[str], List[int]] = {}
     for a in mesa_agents:
-        level = a.income_level
+        level = a.income_level  # Can be None for tourists
         income_groups_map.setdefault(level, []).append(a.unique_id)
     
     # Each agent gets 2-4 connections, preferring same income level (70% same, 30% cross)
@@ -1826,7 +1962,7 @@ async def _run_simulation_single(sim_id: str, run_number: int = 1) -> Dict[str, 
         other_peers = [a.unique_id for a in mesa_agents if a.unique_id != agent.unique_id and a.income_level != agent.income_level]
         
         num_connections = random.randint(2, min(4, len(mesa_agents) - 1))
-        num_same = min(int(num_connections * 0.7) + 1, len(same_income_peers))
+        num_same = min(int(num_connections * 0.7) + 1, len(same_income_peers)) if same_income_peers else 0
         num_cross = min(num_connections - num_same, len(other_peers))
         
         chosen = []
@@ -2389,7 +2525,7 @@ async def _finalize_simulation(sim_id: str, run_metrics: Dict[str, Any], llm_bra
                     "simulation_id": sim_db_id,
                     "agent_id": mesa_agent.unique_id,
                     "income_level": mesa_agent.income_level,
-                    "decision": mesa_agent.last_decision or "visit",
+                    "decision": _report_decision(mesa_agent),
                     "reasoning": mesa_agent.reasoning or "",
                     "spend_amount": mesa_agent.spend_this_week,
                     "profile_text": mesa_agent.profile_text,
@@ -2415,27 +2551,28 @@ async def _finalize_simulation(sim_id: str, run_metrics: Dict[str, Any], llm_bra
     elif is_price_scenario:
         income_breakdown = {}
         for mesa_agent in mesa_agents:
-            level = mesa_agent.income_level
+            level = _report_group(mesa_agent, True)
             if level not in income_breakdown:
                 income_breakdown[level] = {"total": 0, "visit": 0, "skip": 0, "churn": 0}
             income_breakdown[level]["total"] += 1
-            decision = mesa_agent.last_decision or "visit"
-            if decision in income_breakdown[level]:
-                income_breakdown[level][decision] += 1
+            income_breakdown[level][_report_decision(mesa_agent)] += 1
         breakdown_data = income_breakdown
         breakdown_label = "income"
     else:
         personality_breakdown = {}
         for mesa_agent in mesa_agents:
-            ptype = getattr(mesa_agent, 'personality_type', 'customer')
+            ptype = _report_group(mesa_agent, False)
             if ptype not in personality_breakdown:
                 personality_breakdown[ptype] = {"total": 0, "visit": 0, "skip": 0, "churn": 0}
             personality_breakdown[ptype]["total"] += 1
-            decision = mesa_agent.last_decision or "visit"
-            if decision in personality_breakdown[ptype]:
-                personality_breakdown[ptype][decision] += 1
+            personality_breakdown[ptype][_report_decision(mesa_agent)] += 1
         breakdown_data = personality_breakdown
         breakdown_label = "personality"
+
+    # Use the same final, one-outcome-per-agent breakdown for the summary and
+    # category rates, preventing peer-influence counters from diverging.
+    total_visits = round(sum(data["visit"] for data in breakdown_data.values()))
+    total_churned = round(sum(data["churn"] for data in breakdown_data.values()))
     
     # Calculate risk metrics
     churn_rate = (total_churned / len(agents)) * 100 if agents else 0
@@ -2614,9 +2751,7 @@ RECOMMENDATIONS:
         "archetype_breakdown": {
             level: {
                 "total": data["total"],
-                "visit_pct": round((data["visit"] / data["total"]) * 100, 1) if data["total"] > 0 else 0,
-                "skip_pct": round((data["skip"] / data["total"]) * 100, 1) if data["total"] > 0 else 0,
-                "churn_pct": round((data["churn"] / data["total"]) * 100, 1) if data["total"] > 0 else 0,
+                **_report_percentages(data),
             }
             for level, data in breakdown_data.items()
         },

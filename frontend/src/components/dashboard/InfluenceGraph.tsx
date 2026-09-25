@@ -45,9 +45,6 @@ export default function InfluenceGraph({ agents, influences, highlightedAgentId,
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null)
   const [selected, setSelected] = useState<Selection | null>(null)
 
-  // Track if this is the initial mount or a data change requiring full redraw
-  const dataVersionRef = useRef(0)
-  
   const draw = useCallback(() => {
     if (!svgRef.current || !wrapRef.current || agents.length === 0) return
 
@@ -421,8 +418,10 @@ export default function InfluenceGraph({ agents, influences, highlightedAgentId,
               
               {/* Stats grid */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.25rem 1rem' }}>
-                <TRow label={['Micro','Small','Medium'].includes(selected.agent.income_level) ? 'Size' : 'Income'} value={selected.agent.income_level} />
-                <TRow label={['Micro','Small','Medium'].includes(selected.agent.income_level) ? 'Segment' : 'Age'} value={selected.agent.age_range} />
+                {!/tourist|traveler|traveller|visitor/i.test(`${selected.agent.personality_type ?? ''} ${selected.agent.personality ?? ''}`) && <>
+                  <TRow label={['Micro','Small','Medium'].includes(selected.agent.income_level) ? 'Size' : 'Income'} value={selected.agent.income_level} />
+                  <TRow label={['Micro','Small','Medium'].includes(selected.agent.income_level) ? 'Segment' : 'Age'} value={selected.agent.age_range} />
+                </>}
                 <TRow label="Status"         value={selected.agent.is_active ? 'Active' : 'Churned'} />
                 <TRow label="Last decision"  value={selected.agent.last_decision ?? '—'} />
               </div>

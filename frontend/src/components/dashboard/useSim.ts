@@ -119,9 +119,6 @@ export function useSim(sessionId: string, profileId?: string) {
 
   // Plain-English loading message for the simplified loading screen
   const [loadingMessage, setLoadingMessage] = useState<string>('Starting simulation…')
-  // Tracks when the sim started (for ETA estimation)
-  const simStartTimeRef = useRef<number | null>(null)
-
   // In-session completed simulations — drives the tab bar
   const [completedSims, setCompletedSims] = useState<CompletedSim[]>([])
   const [activeTabId,   setActiveTabId]   = useState<string | null>(null)
@@ -235,8 +232,6 @@ export function useSim(sessionId: string, profileId?: string) {
     scenarioTypeRef.current = scenario.scenario_type
     addFeed('system', `Starting simulation: "${scenario.scenario_name}" with ${agentCount} agents…`)
     setLoadingMessage('Setting up your simulation…')
-    simStartTimeRef.current = Date.now()
-
     try {
       const res = await fetch(`${API_BASE}/api/simulation/start`, {
         method: 'POST',
@@ -289,6 +284,19 @@ export function useSim(sessionId: string, profileId?: string) {
           setAgents(agentsRef.current)
           setLoadingMessage('Building customer personalities…')
         }
+      })
+      es.addEventListener('agent_demographics_cleared', e => {
+        const d = JSON.parse((e as MessageEvent).data) as {
+          agent_id: number
+          personality_type: string
+        }
+        const viewingHistory = getIsRestoredFromHistory()
+        agentsRef.current = agentsRef.current.map(a =>
+          a.agent_id === d.agent_id
+            ? { ...a, income_level: '', age_range: '', personality_type: d.personality_type }
+            : a
+        )
+        if (!viewingHistory) setAgents(agentsRef.current)
       })
       es.addEventListener('profile_generation_complete', () => {
         addFeed('system', `✅ All agent personalities generated. Starting simulation...`)
@@ -654,7 +662,6 @@ export function useSim(sessionId: string, profileId?: string) {
     scenarioNameRef.current = ''
     scenarioTypeRef.current = ''
     setLoadingMessage('Starting simulation…')
-    simStartTimeRef.current = null
   }, [])
   
   const terminate = useCallback(() => {
@@ -698,7 +705,6 @@ export function useSim(sessionId: string, profileId?: string) {
     scenarioNameRef.current = ''
     scenarioTypeRef.current = ''
     setLoadingMessage('Starting simulation…')
-    simStartTimeRef.current = null
   }, [])
 
   // Resume viewing the live/current simulation (after viewing history)
@@ -729,7 +735,6 @@ export function useSim(sessionId: string, profileId?: string) {
     completedSims, activeTabId, setActiveTabId,
     monteCarloState,
     loadingMessage,
-    simStartTime: simStartTimeRef,
   }
 }
 

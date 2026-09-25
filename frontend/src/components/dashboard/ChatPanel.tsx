@@ -424,7 +424,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
           doc.setFontSize(FONT_BODY)
           doc.setFont('helvetica', 'normal')
           doc.setTextColor(0)
-          recs.forEach((r: string, i: number) => {
+          recs.forEach((r: string) => {
             const clean = r.replace(/\*\*/g, '')
             const lines: string[] = doc.splitTextToSize(clean, pageWidth - 4)
             for (let j = 0; j < lines.length; j++) {

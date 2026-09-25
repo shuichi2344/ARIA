@@ -29,7 +29,27 @@ export default function DashboardPage({ session }: Props) {
   const router = useRouter()
   const { logout } = useSession()
   const [profile, setProfile] = useState<BusinessProfile | null>(null)
-  const { startTutorial, resetTutorial, advanceToSimulationStep, isDemoReady } = useTutorial()
+  const [expiryWarningDismissed, setExpiryWarningDismissed] = useState(false)
+  const { startTutorial, resetTutorial, advanceToSimulationStep } = useTutorial()
+
+  const betaExpiryDate = session.beta_access_expires_at
+    ? new Date(session.beta_access_expires_at)
+    : null
+  const betaTimeRemaining = betaExpiryDate && !Number.isNaN(betaExpiryDate.getTime())
+    ? betaExpiryDate.getTime() - Date.now()
+    : null
+  const betaDaysRemaining = betaTimeRemaining !== null
+    ? Math.ceil(betaTimeRemaining / (24 * 60 * 60 * 1000))
+    : null
+  const expiryDismissalKey = `aria_beta_expiry_warning:${session.id}:${session.beta_access_expires_at || ''}`
+  const showExpiryWarning = betaTimeRemaining !== null
+    && betaTimeRemaining > 0
+    && betaTimeRemaining <= 3 * 24 * 60 * 60 * 1000
+    && !expiryWarningDismissed
+
+  useEffect(() => {
+    setExpiryWarningDismissed(localStorage.getItem(expiryDismissalKey) === 'dismissed')
+  }, [expiryDismissalKey])
 
   // Apply saved theme
   useEffect(() => {
@@ -69,7 +89,11 @@ export default function DashboardPage({ session }: Props) {
   // Auto-start tutorial on first visit (after a short delay to let the UI settle)
   useEffect(() => {
     const timer = setTimeout(() => {
-      startTutorial()
+      const isFirstDashboardVisit = new URLSearchParams(window.location.search).get('welcome') === '1'
+      startTutorial(isFirstDashboardVisit)
+      if (isFirstDashboardVisit) {
+        window.history.replaceState(window.history.state, '', '/dashboard')
+      }
     }, 800)
     return () => clearTimeout(timer)
   }, [startTutorial])
@@ -189,25 +213,6 @@ export default function DashboardPage({ session }: Props) {
       },
     ])
   }
-
-  // Progress — accounts for Monte Carlo multi-run structure
-  const decidedCount = sim.agents.filter(a => a.last_decision !== null).length
-  const mc = sim.monteCarloState
-  const progressPct = (() => {
-    if (mc && mc.max_runs > 0) {
-      // Each run is one equal slice. Within the current run, agent decisions fill the slice.
-      const completedRuns = Math.max(0, mc.current_run - 1)  // runs fully finished
-      const runSlice = 100 / mc.max_runs
-      const withinRunPct = sim.agents.length > 0
-        ? (decidedCount / sim.agents.length) * runSlice
-        : 0
-      return Math.min(99, Math.round(completedRuns * runSlice + withinRunPct))
-    }
-    // No Monte Carlo — straight agent-decision progress
-    return sim.agents.length > 0
-      ? Math.round((decidedCount / sim.agents.length) * 100)
-      : 0
-  })()
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -366,6 +371,47 @@ export default function DashboardPage({ session }: Props) {
         </div>
       </header>
 
+      {showExpiryWarning && betaExpiryDate && betaDaysRemaining !== null && (
+        <aside
+          role="status"
+          aria-label="Beta access expiry notice"
+          style={{
+            position: 'fixed', top: 68, right: 16, zIndex: 120,
+            width: 'min(350px, calc(100vw - 32px))',
+            display: 'flex', alignItems: 'flex-start', gap: '0.7rem',
+            padding: '0.8rem 0.85rem',
+            color: '#854d0e', background: '#fffbeb',
+            border: '1px solid #fcd34d', borderRadius: 10,
+            boxShadow: '0 8px 24px rgba(15, 23, 42, 0.12)',
+            fontSize: '0.82rem', lineHeight: 1.45,
+          }}
+        >
+          <span aria-hidden="true" style={{ fontSize: '1rem', lineHeight: 1 }}>⚠</span>
+          <span style={{ flex: 1 }}>
+            <strong style={{ display: 'block', marginBottom: '0.15rem' }}>
+              Beta access expires {betaDaysRemaining === 1 ? 'within 24 hours' : `in ${betaDaysRemaining} days`}
+            </strong>
+            Your access ends on {betaExpiryDate.toLocaleString()}.
+          </span>
+          <button
+            type="button"
+            aria-label="Dismiss beta access expiry notice"
+            title="Dismiss"
+            onClick={() => {
+              localStorage.setItem(expiryDismissalKey, 'dismissed')
+              setExpiryWarningDismissed(true)
+            }}
+            style={{
+              flex: '0 0 auto', border: 0, padding: 2, margin: -2,
+              background: 'transparent', color: '#854d0e', cursor: 'pointer',
+              fontSize: '1.1rem', lineHeight: 1,
+            }}
+          >
+            ×
+          </button>
+        </aside>
+      )}
+
       {/* ── Split layout ── matches .dash-layout */}
       <div style={{
         display: 'grid',
@@ -480,9 +526,6 @@ export default function DashboardPage({ session }: Props) {
             // Determine which run to display based on Activity Feed pagination
             // For Monte Carlo: completedSims has all individual runs + summary at the end
             // ActivityFeed pages correspond to individual runs only
-            const mcState = sim.monteCarloState
-            const isMonteCarlo = mcState && mcState.max_runs > 1
-            
             // Find the summary (last entry with scenarioName containing "Summary")
             const summaryIndex = sim.completedSims.findIndex(s => s.scenarioName.includes('Summary'))
             const hasSummary = summaryIndex >= 0
@@ -543,7 +586,7 @@ export default function DashboardPage({ session }: Props) {
                     <MonteCarloBadge mc={sim.monteCarloState} />
                   )}
                 </div>
-                {isRunningLive && !viewingCompletedRun && !sim.isRestoredFromHistory && (
+                {isRunningLive && !sim.isRestoredFromHistory && (
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <TerminateBtn onClick={sim.terminate} />
                   </div>
@@ -555,11 +598,7 @@ export default function DashboardPage({ session }: Props) {
                 <SimLoadingScreen
                   scenarioName={displayName}
                   message={sim.loadingMessage}
-                  progressPct={progressPct}
-                  agentCount={sim.agents.length}
-                  decidedCount={decidedCount}
                   monteCarloState={sim.monteCarloState}
-                  simStartTime={sim.simStartTime.current}
                   onShowThoughtProcess={() => {
                     setShowThoughtProcess(true)
                     showThoughtProcessRef.current = true
@@ -691,44 +730,13 @@ export default function DashboardPage({ session }: Props) {
 interface SimLoadingScreenProps {
   scenarioName: string
   message: string
-  progressPct: number
-  agentCount: number
-  decidedCount: number
   monteCarloState: MonteCarloState | null
-  simStartTime: number | null
   onShowThoughtProcess: () => void
 }
 
 function SimLoadingScreen({
-  scenarioName, message, progressPct, agentCount, decidedCount,
-  monteCarloState, simStartTime, onShowThoughtProcess,
+  scenarioName, message, monteCarloState, onShowThoughtProcess,
 }: SimLoadingScreenProps) {
-  const [elapsed, setElapsed] = useState(0)
-
-  // Tick every second to keep ETA fresh
-  useEffect(() => {
-    if (!simStartTime) return
-    const id = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - simStartTime) / 1000))
-    }, 1000)
-    return () => clearInterval(id)
-  }, [simStartTime])
-
-  // ETA: extrapolate from current pace
-  function formatEta(): string {
-    if (progressPct <= 0 || progressPct >= 100 || elapsed <= 2) return 'Estimating…'
-    const totalSec = Math.round((elapsed / progressPct) * 100)
-    const remaining = totalSec - elapsed
-    if (remaining <= 0) return 'Almost done…'
-    if (remaining < 60) return `~${remaining}s remaining`
-    return `~${Math.ceil(remaining / 60)}min remaining`
-  }
-
-  function formatElapsed(): string {
-    if (elapsed < 60) return `${elapsed}s`
-    return `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
-  }
-
   // Monte Carlo label
   const mcLabel = monteCarloState
     ? monteCarloState.current_run > 0
@@ -909,32 +917,6 @@ function InfoTooltip({ text }: { text: string }) {
         </span>
       )}
     </span>
-  )
-}
-
-function CtrlBtn({ onClick, title, children, danger }: { onClick: () => void; title?: string; children: React.ReactNode; danger?: boolean }) {
-  const [hov, setHov] = useState(false)
-  return (
-    <button
-      onClick={onClick}
-      onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => setHov(false)}
-      title={title}
-      style={{
-        background: 'none',
-        border: `1.5px solid ${danger ? '#ef4444' : 'var(--gray-300)'}`,
-        borderRadius: 6,
-        padding: '0.3rem 0.5rem',
-        cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        color: danger ? (hov ? '#dc2626' : '#ef4444') : (hov ? 'var(--accent)' : 'var(--gray-700)'),
-        transition: 'all 0.15s',
-        fontFamily: 'var(--font-family)',
-      }}
-    >
-      {children}
-    </button>
   )
 }
 

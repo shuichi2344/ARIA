@@ -15,6 +15,17 @@ export default function LandingPage() {
   const [authOpen, setAuthOpen] = useState(false)
   const [authTab,  setAuthTab]  = useState<'login' | 'register'>('login')
   const [navigating, setNavigating] = useState(false)
+  
+  // Check for auth errors in URL
+  const [authError, setAuthError] = useState<string | null>(null)
+  
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const error = params.get('error')
+    if (error) {
+      setAuthError(decodeURIComponent(error))
+    }
+  }, [])
 
   // Apply saved theme on every mount — same as initThemeSwitcher() / applyTheme()
   useEffect(() => {
@@ -22,16 +33,85 @@ export default function LandingPage() {
     document.body.dataset.theme = saved
   }, [])
 
-  // Handle ?auth= query param (from /auth/login redirect)
+  // Handle auth-related query params and URL hash
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
+    const hash = window.location.hash
+    
+    // Check for error parameter (from Supabase or callback failures)
+    const error = params.get('error')
+    const errorDescription = params.get('error_description')
+    
+    // Also check hash for errors (Supabase sometimes puts errors in hash)
+    const hashParams = new URLSearchParams(hash.substring(1))
+    const hashError = hashParams.get('error')
+    const hashErrorCode = hashParams.get('error_code')
+    const hashErrorDesc = hashParams.get('error_description')
+    
+    // Check if it's an expired invite error
+    const isExpiredInvite = 
+      hashErrorCode === 'otp_expired' ||
+      hashError === 'access_denied' ||
+      hashErrorDesc?.toLowerCase().includes('expired') ||
+      hashErrorDesc?.toLowerCase().includes('invalid')
+    
+    if (hashError && isExpiredInvite) {
+      console.log('[Home] Expired invitation detected in hash, redirecting to error page')
+      const errorParams = new URLSearchParams({
+        error: hashError,
+        error_code: hashErrorCode || '',
+        error_description: hashErrorDesc || hashError
+      })
+      router.push(`/auth/error?${errorParams.toString()}`)
+      return
+    }
+    
+    if (error) {
+      console.log('[Home] Auth error detected:', error, errorDescription)
+      // Don't redirect - let the page show the error
+      // The error will be displayed by checking the URL params below
+      return
+    }
+    
+    // Parse hash parameters (Supabase auth tokens come in the hash)
+    const hasAccessToken = hashParams.has('access_token')
+    const type = params.get('type') || hashParams.get('type')
+    
+    console.log('[Home] Auth check:', { 
+      hasToken: params.has('token_hash') || hasAccessToken,
+      type,
+      hash: hash.substring(0, 50) 
+    })
+    
+    // Check for Supabase auth tokens
+    if (params.has('token_hash') || hasAccessToken) {
+      console.log('[Home] Supabase auth token detected, type:', type)
+      
+      // Redirect to appropriate page based on type, preserving the hash
+      if (type === 'invite') {
+        console.log('[Home] Invitation detected, redirecting to setup-password')
+        router.push(`/auth/setup-password${window.location.search}${hash}`)
+        return
+      } else if (type === 'recovery') {
+        console.log('[Home] Password recovery detected, redirecting to reset-password')
+        router.push(`/auth/reset-password${window.location.search}${hash}`)
+        return
+      } else if (hasAccessToken) {
+        // Generic access token - redirect to setup-password as fallback
+        console.log('[Home] Generic access token, redirecting to setup-password')
+        router.push(`/auth/setup-password${window.location.search}${hash}`)
+        return
+      }
+    }
+    
+    // Handle ?auth= query param (from /auth/login redirect)
     const authParam = params.get('auth')
     if (authParam === 'login' || authParam === 'register') {
       setAuthTab(authParam)
       setAuthOpen(true)
       window.history.replaceState({}, '', '/')
     }
-  }, [])
+  }, [router])
 
   // Scroll animations — same as initScrollAnimations()
   useEffect(() => {
@@ -62,8 +142,10 @@ export default function LandingPage() {
     access_token: string
     refresh_token?: string
     email_confirmed?: boolean
+    beta_access_expires_at?: string
   }) {
     console.log('[Auth] routeAfterAuth called for user:', user.email)
+    setAuthError(null)
     setSession(user)
     setAuthOpen(false)
     setNavigating(true)
@@ -76,6 +158,7 @@ export default function LandingPage() {
       console.error('[Auth] Failed to save session to localStorage:', err)
     }
 
+    let confirmedNoProfile = false
     try {
       console.log('[Auth] Checking for existing business profile...')
       const controller = new AbortController()
@@ -108,27 +191,40 @@ export default function LandingPage() {
           return
         } else {
           console.warn('[Auth] Profile response OK but no profile.id found:', profile)
+          setAuthError('Your account was verified, but ARIA could not load your saved business profile. Please select Get Started to retry.')
+          return
         }
       } else if (res.status === 404) {
-        // 404 means no profile exists - this is expected for new users
-        console.log('[Auth] No profile found (404) - redirecting to onboarding')
+        const errorBody = await res.json().catch(() => null)
+        if (errorBody?.detail === 'No profile found for this user') {
+          // Only this explicit response means the account genuinely has no profile.
+          console.log('[Auth] No profile found - redirecting to onboarding')
+          confirmedNoProfile = true
+        } else {
+          console.warn('[Auth] Profile endpoint returned an unexpected 404:', errorBody)
+          setAuthError('ARIA could not verify your saved business profile. Your existing data has not been changed. Please select Get Started to retry.')
+          return
+        }
       } else {
-        // Other errors (401, 500, etc.) - log but still redirect to onboarding
         const errorText = await res.text().catch(() => '')
         console.warn('[Auth] Profile check failed with status:', res.status, errorText)
+        setAuthError('ARIA could not load your saved business profile. Your existing data has not been changed. Please select Get Started to retry.')
+        return
       }
     } catch (err) {
-      // Network error, timeout, or abort - still allow onboarding
       if (err instanceof Error) {
         console.warn('[Auth] Profile check error:', err.message)
       } else {
         console.warn('[Auth] Profile check failed with unknown error')
       }
+      setAuthError('ARIA could not reach the server to load your saved business profile. Your existing data has not been changed. Please select Get Started to retry.')
+      return
     } finally {
       setNavigating(false)
     }
 
-    // If we got here, no profile was found or fetch failed - go to onboarding
+    // New users enter onboarding only after the API explicitly confirms no profile exists.
+    if (!confirmedNoProfile) return
     console.log('[Auth] Redirecting to onboarding')
     // Give a tiny delay to ensure localStorage is written before navigation
     await new Promise(resolve => setTimeout(resolve, 100))
@@ -169,6 +265,77 @@ export default function LandingPage() {
             onLogout={handleLogout}
             onEditProfile={handleEditProfile}
           />
+        </div>
+      )}
+
+      {/* Auth error notification */}
+      {authError && (
+        <div style={{
+          position: 'fixed',
+          top: '1rem',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          maxWidth: '500px',
+          width: 'calc(100% - 2rem)',
+          background: '#fef2f2',
+          border: '1px solid #fecaca',
+          borderRadius: '12px',
+          padding: '1rem 1.25rem',
+          boxShadow: '0 4px 12px rgba(220, 38, 38, 0.15)',
+          zIndex: 1000,
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: '0.75rem'
+        }}>
+          <div style={{ 
+            background: '#fee2e2', 
+            borderRadius: '50%', 
+            padding: '0.5rem', 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            flexShrink: 0
+          }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+          </div>
+          <div style={{ flex: 1 }}>
+            <h3 style={{ margin: '0 0 0.25rem', fontSize: '0.9375rem', fontWeight: 600, color: '#991b1b' }}>
+              Authentication Error
+            </h3>
+            <p style={{ margin: 0, fontSize: '0.8125rem', color: '#dc2626', lineHeight: 1.5 }}>
+              {authError}
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              setAuthError(null)
+              window.history.replaceState({}, '', '/')
+            }}
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: '#dc2626',
+              padding: '0.25rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: '4px',
+              transition: 'background 0.2s',
+              flexShrink: 0
+            }}
+            onMouseEnter={e => (e.currentTarget.style.background = '#fee2e2')}
+            onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
         </div>
       )}
 

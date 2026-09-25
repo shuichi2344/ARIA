@@ -68,7 +68,12 @@ class SupabaseClient:
     # User auth methods — all delegated to Supabase Auth
     # -------------------------------------------------------------------------
 
-    async def register_user(self, email: str, password: str) -> Dict[str, Any]:
+    async def register_user(
+        self,
+        email: str,
+        password: str,
+        redirect_to: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Register a new user via Supabase Auth.
 
@@ -87,8 +92,9 @@ class SupabaseClient:
             "password": password,
         }
 
+        params = {"redirect_to": redirect_to} if redirect_to else None
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=self.headers) as resp:
+            async with session.post(url, json=payload, params=params, headers=self.headers) as resp:
                 body = await resp.json()
                 if resp.status not in (200, 201):
                     msg = body.get("msg") or body.get("message") or body.get("error_description") or str(body)
@@ -152,6 +158,7 @@ class SupabaseClient:
                     "id":            user.get("id", ""),
                     "email":         user.get("email", email),
                     "created_at":    user.get("created_at", datetime.now(timezone.utc).isoformat()),
+                    "beta_access_expires_at": (user.get("user_metadata") or {}).get("beta_access_expires_at"),
                     "access_token":  body.get("access_token"),
                     "refresh_token": body.get("refresh_token"),
                 }
@@ -174,13 +181,26 @@ class SupabaseClient:
                     }
                 return None
 
+    async def get_authenticated_user(self, access_token: str) -> Optional[Dict[str, Any]]:
+        """Validate a user access token through Supabase Auth.
+
+        Using Auth's user endpoint supports both legacy HS256 tokens and
+        projects configured with asymmetric JWT signing keys.
+        """
+        url = f"{self.base_url}/auth/v1/user"
+        headers = {**self.headers, "Authorization": f"Bearer {access_token}"}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                return None
+
     async def request_password_reset(self, email: str, redirect_to: Optional[str] = None) -> bool:
         """
         Trigger Supabase Auth to send a password-reset email via Supabase SMTP.
 
         Supabase always returns 200 to prevent email enumeration.
-        The reset link in the email will contain an access_token the user
-        must send to /api/auth/reset-password.
+        Supabase redirects the recovery link back to the configured frontend URL.
 
         NOTE: redirect_to must be passed as a *query parameter*, not in the
         JSON body.  The Supabase /auth/v1/recover endpoint ignores a
@@ -249,6 +269,43 @@ class SupabaseClient:
             if "invalid" in msg or "expired" in msg or "jwt" in msg:
                 raise Exception("INVALID_CREDENTIALS")
             raise
+
+    async def check_beta_access(self, user_id: str) -> bool:
+        """
+        Check if a user's beta access is still valid.
+        
+        Args:
+            user_id: The user's UUID
+            
+        Returns:
+            True if access is valid, False if expired or not set
+        """
+        url = f"{self.base_url}/rest/v1/rpc/is_beta_access_valid"
+        payload = {"user_id": user_id}
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=self.headers) as resp:
+                if resp.status == 200:
+                    result = await resp.json()
+                    return result if isinstance(result, bool) else False
+                return False
+
+    async def set_beta_access_expiration(self, user_id: str, days: int = 7) -> None:
+        """
+        Set beta access expiration for a user.
+        
+        Args:
+            user_id: The user's UUID
+            days: Number of days from now until access expires (default 7)
+        """
+        url = f"{self.base_url}/rest/v1/rpc/set_beta_access_expiration"
+        payload = {"user_id": user_id, "days_from_now": days}
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=self.headers) as resp:
+                if resp.status not in [200, 204]:
+                    error_text = await resp.text()
+                    raise Exception(f"Failed to set beta access: {error_text}")
 
     # -------------------------------------------------------------------------
     # Business profile methods

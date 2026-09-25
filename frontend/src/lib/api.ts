@@ -66,7 +66,7 @@ export interface DemographicsResponse {
 }
 
 /** Read the stored session and return the access_token, or null if not logged in. */
-function getAccessToken(): string | null {
+export function getAccessToken(): string | null {
   if (typeof window === 'undefined') return null
   try {
     const raw = localStorage.getItem('aria_session')
@@ -77,16 +77,17 @@ function getAccessToken(): string | null {
   }
 }
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+export function getAuthHeaders(): Record<string, string> {
   const token = getAccessToken()
-  const extraHeaders: Record<string, string> = token
-    ? { Authorization: `Bearer ${token}` }
-    : {}
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
-      ...extraHeaders,
+      ...getAuthHeaders(),
       ...((init?.headers as Record<string, string>) ?? {}),
     },
   })

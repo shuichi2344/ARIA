@@ -6,6 +6,7 @@ import { jsPDF } from 'jspdf'
 import SimulationSettings from './SimulationSettings'
 import type { SimulationSettingsState } from './SimulationSettings'
 import { SIMULATION_MODES } from './SimulationSettings'
+import { getAuthHeaders } from '@/lib/api'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
@@ -174,7 +175,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
     if (!userId) return
     fetch(`${API_BASE}/api/chat/message`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({
         user_id: userId,
         profile_id: profile?.id,
@@ -222,7 +223,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
         prev.agentCount !== settings.agentCount ||
         prev.b2bPercentage !== settings.b2bPercentage
       )) {
-        fetch(`${API_BASE}/api/simulation/cache/clear`, { method: 'POST' }).catch(() => {})
+        fetch(`${API_BASE}/api/simulation/cache/clear`, { method: 'POST', headers: getAuthHeaders() }).catch(() => {})
       }
       return settings
     })
@@ -486,7 +487,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
       // Abort any pending API request
       if (abortRef.current) { abortRef.current.abort(); abortRef.current = null }
       // Clear cached agent personalities so next simulation generates fresh ones
-      fetch(`${API_BASE}/api/simulation/cache/clear`, { method: 'POST' }).catch(() => {})
+      fetch(`${API_BASE}/api/simulation/cache/clear`, { method: 'POST', headers: getAuthHeaders() }).catch(() => {})
       // Reset history-viewing state and any saved live chat snapshot
       viewingHistoryRef.current = false
       liveChatSnapshotRef.current = null
@@ -726,7 +727,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
       
       const res = await fetch(`${API_BASE}/api/simulation/suggest`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({
           user_question:    text,
           business_profile: profile || { business_name: 'Unknown', business_type: 'Unknown' },
@@ -812,7 +813,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
     try {
       const res = await fetch(`${API_BASE}/api/simulation/suggest`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({
           user_question: lastUserQuestion,
           business_profile: profile || { business_name: 'Unknown', business_type: 'Unknown' },
@@ -895,7 +896,7 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
     try {
       const res = await fetch(`${API_BASE}/api/simulation/suggest`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({
           user_question: text,
           business_profile: profile || { business_name: 'Unknown', business_type: 'Unknown' },

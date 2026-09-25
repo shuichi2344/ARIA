@@ -2,9 +2,49 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { Agent, Scenario, SimStatus, WeekSummary, FeedItem, InfluenceEdge, SimSnapshot, SimReport } from './types'
+import { getAuthHeaders } from '@/lib/api'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 let feedCounter = 0
+
+class AuthenticatedEventStream extends EventTarget {
+  private controller = new AbortController()
+
+  constructor(url: string) {
+    super()
+    void this.connect(url)
+  }
+
+  close() { this.controller.abort() }
+
+  private async connect(url: string) {
+    try {
+      const response = await fetch(url, { headers: getAuthHeaders(), signal: this.controller.signal })
+      if (!response.ok || !response.body) throw new Error(`Stream request failed (${response.status})`)
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (!this.controller.signal.aborted) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
+        const frames = buffer.split('\n\n')
+        buffer = frames.pop() ?? ''
+        for (const frame of frames) {
+          let eventName = 'message'
+          const data: string[] = []
+          for (const line of frame.split('\n')) {
+            if (line.startsWith('event:')) eventName = line.slice(6).trim()
+            else if (line.startsWith('data:')) data.push(line.slice(5).trimStart())
+          }
+          if (data.length) this.dispatchEvent(new MessageEvent(eventName, { data: data.join('\n') }))
+        }
+      }
+    } catch {
+      if (!this.controller.signal.aborted) this.dispatchEvent(new Event('error'))
+    }
+  }
+}
 
 // Sentinel ID for the "live" tab (currently running simulation)
 export const LIVE_TAB_ID = '__live__'
@@ -126,7 +166,7 @@ export function useSim(sessionId: string, profileId?: string) {
   // Fetch history from database on mount
   useEffect(() => {
     if (!profileId) return
-    fetch(`${API_BASE}/api/simulation/history/${profileId}`)
+    fetch(`${API_BASE}/api/simulation/history/${profileId}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : { history: [] })
       .then(data => {
         const items: SimSnapshot[] = (data.history || []).map((h: any) => mapHistoryItem(h))
@@ -153,14 +193,14 @@ export function useSim(sessionId: string, profileId?: string) {
   } | null>(null)
 
   const simIdRef = useRef<string | null>(null)
-  const esRef    = useRef<EventSource | null>(null)
+  const esRef    = useRef<AuthenticatedEventStream | null>(null)
 
   // Cleanup on unmount: cancel running simulation and close SSE
   useEffect(() => {
     return () => {
       if (esRef.current) { esRef.current.close(); esRef.current = null }
       if (simIdRef.current) {
-        fetch(`${API_BASE}/api/simulation/${simIdRef.current}/cancel`, { method: 'POST' }).catch(() => {})
+        fetch(`${API_BASE}/api/simulation/${simIdRef.current}/cancel`, { method: 'POST', headers: getAuthHeaders() }).catch(() => {})
       }
     }
   }, [])
@@ -197,7 +237,7 @@ export function useSim(sessionId: string, profileId?: string) {
   const launch = useCallback(async (scenario: Scenario, agentCount: number = 25, options?: { income_constraints?: string[] | null; age_constraints?: string[] | null; target_customer_constraints?: string[] | null; business_size_constraints?: string[] | null; b2b_percentage?: number | null; chat_session_id?: string | null }) => {
     // Cancel the previous simulation on the backend before starting a new one
     if (simIdRef.current) {
-      fetch(`${API_BASE}/api/simulation/${simIdRef.current}/cancel`, { method: 'POST' }).catch(() => {})
+      fetch(`${API_BASE}/api/simulation/${simIdRef.current}/cancel`, { method: 'POST', headers: getAuthHeaders() }).catch(() => {})
     }
     // Close any existing SSE connection BEFORE changing state
     // Use a flag to prevent the old error handler from resetting status
@@ -235,7 +275,7 @@ export function useSim(sessionId: string, profileId?: string) {
     try {
       const res = await fetch(`${API_BASE}/api/simulation/start`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({
           user_id:        sessionId,
           profile_id:     profileId,
@@ -261,7 +301,7 @@ export function useSim(sessionId: string, profileId?: string) {
       setMetrics(null);  metricsRef.current = null
 
       // SSE stream
-      const es = new EventSource(`${API_BASE}/api/simulation/${data.simulation_id}/stream`)
+      const es = new AuthenticatedEventStream(`${API_BASE}/api/simulation/${data.simulation_id}/stream`)
       esRef.current = es
 
       es.addEventListener('week_start', e => {
@@ -328,17 +368,21 @@ export function useSim(sessionId: string, profileId?: string) {
       })
       es.addEventListener('peer_evaluation', e => {
         const d = JSON.parse((e as MessageEvent).data) as {
-          agent_id: number; income_level: string; current_decision: string;
+          agent_id: number; income_level?: string | null; current_decision: string;
           direction: string; num_peers: number; probability: number; flipped: boolean
         }
+        const incomeLabel = typeof d.income_level === 'string' &&
+          d.income_level.trim() && !['null', 'undefined'].includes(d.income_level.trim().toLowerCase())
+          ? ` (${esc(d.income_level.trim())})`
+          : ''
         if (d.flipped) {
           const newDec = d.direction === 'negative' ? 'skip' : 'visit'
           const emoji = newDec === 'visit' ? '🟢' : '🟡'
           addFeed(newDec as FeedItem['type'],
-            `🗣️ <strong>Customer ${d.agent_id}</strong> (${d.income_level}) changed to ${newDec} ${emoji} after hearing from ${d.num_peers} friend${d.num_peers > 1 ? 's' : ''}`, d.agent_id)
+            `🗣️ <strong>Customer ${d.agent_id}</strong>${incomeLabel} changed to ${newDec} ${emoji} after hearing from ${d.num_peers} friend${d.num_peers > 1 ? 's' : ''}`, d.agent_id)
         } else {
           addFeed('system',
-            `<span style="opacity:0.6">🗣️ Customer ${d.agent_id} (${d.income_level}) heard from ${d.num_peers} ${d.direction} peer${d.num_peers > 1 ? 's' : ''} — stayed with ${d.current_decision}</span>`, d.agent_id)
+            `<span style="opacity:0.6">🗣️ Customer ${d.agent_id}${incomeLabel} heard from ${d.num_peers} ${d.direction} peer${d.num_peers > 1 ? 's' : ''} — stayed with ${d.current_decision}</span>`, d.agent_id)
         }
       })
       es.addEventListener('phase_label', e => {
@@ -566,7 +610,7 @@ export function useSim(sessionId: string, profileId?: string) {
 
         // Re-fetch history from database to get the saved record with correct ID
         if (profileId) {
-          fetch(`${API_BASE}/api/simulation/history/${profileId}`)
+          fetch(`${API_BASE}/api/simulation/history/${profileId}`, { headers: getAuthHeaders() })
             .then(res => res.ok ? res.json() : { history: [] })
             .then(data => {
               const items: SimSnapshot[] = (data.history || []).map((h: any) => mapHistoryItem(h))
@@ -627,13 +671,13 @@ export function useSim(sessionId: string, profileId?: string) {
   const deleteSnapshot = useCallback((id: string) => {
     setHistory(prev => prev.filter(s => s.id !== id))
     // Delete from database
-    fetch(`${API_BASE}/api/simulation/history/${id}`, { method: 'DELETE' }).catch(() => {})
+    fetch(`${API_BASE}/api/simulation/history/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).catch(() => {})
   }, [])
 
   const reset = useCallback(() => {
     // Cancel the running simulation on the backend
     if (simIdRef.current) {
-      fetch(`${API_BASE}/api/simulation/${simIdRef.current}/cancel`, { method: 'POST' }).catch(() => {})
+      fetch(`${API_BASE}/api/simulation/${simIdRef.current}/cancel`, { method: 'POST', headers: getAuthHeaders() }).catch(() => {})
     }
     // Close any active SSE connection
     if (esRef.current) { esRef.current.close(); esRef.current = null }
@@ -670,7 +714,7 @@ export function useSim(sessionId: string, profileId?: string) {
     
     // Terminate the running simulation gracefully
     if (simIdRef.current) {
-      fetch(`${API_BASE}/api/simulation/${simIdRef.current}/cancel`, { method: 'POST' }).catch(() => {})
+      fetch(`${API_BASE}/api/simulation/${simIdRef.current}/cancel`, { method: 'POST', headers: getAuthHeaders() }).catch(() => {})
     }
     if (esRef.current) { esRef.current.close(); esRef.current = null }
     

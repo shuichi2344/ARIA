@@ -88,12 +88,20 @@ export default function DashboardPage({ session }: Props) {
 
   // Auto-start tutorial on first visit (after a short delay to let the UI settle)
   useEffect(() => {
+    const isFirstDashboardVisit = new URLSearchParams(window.location.search).get('welcome') === '1'
+
+    // The demo scenario belongs to the onboarding tutorial only. A regular
+    // login must never restore leftovers from an interrupted tutorial.
+    if (!isFirstDashboardVisit) {
+      localStorage.removeItem('aria-tutorial-demo-ready')
+      localStorage.removeItem('aria-tutorial-demo-scenario')
+      window.dispatchEvent(new CustomEvent('tutorial-cleanup'))
+      return
+    }
+
     const timer = setTimeout(() => {
-      const isFirstDashboardVisit = new URLSearchParams(window.location.search).get('welcome') === '1'
-      startTutorial(isFirstDashboardVisit)
-      if (isFirstDashboardVisit) {
-        window.history.replaceState(window.history.state, '', '/dashboard')
-      }
+      startTutorial(true)
+      window.history.replaceState(window.history.state, '', '/dashboard')
     }, 800)
     return () => clearTimeout(timer)
   }, [startTutorial])

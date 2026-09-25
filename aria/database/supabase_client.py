@@ -428,6 +428,51 @@ class SupabaseClient:
                 print(f"[WARN] get_business_profile: status={response.status} for {profile_id}")
                 return None
 
+    async def profile_belongs_to_user(self, profile_id: str, user_id: str) -> bool:
+        """Check profile ownership using the authoritative database row."""
+        url = f"{self.base_url}/rest/v1/business_profiles"
+        params = {"profile_id": f"eq.{profile_id}", "user_id": f"eq.{user_id}", "select": "profile_id", "limit": "1"}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, headers=self.headers) as response:
+                if response.status != 200:
+                    raise Exception(f"Could not verify business profile ownership ({response.status})")
+                return bool(await response.json())
+
+    async def chat_session_belongs_to_user(self, session_id: str, user_id: str) -> bool:
+        """Check chat session ownership and return false for missing sessions."""
+        url = f"{self.base_url}/rest/v1/chat_sessions"
+        params = {"session_id": f"eq.{session_id}", "user_id": f"eq.{user_id}", "select": "session_id", "limit": "1"}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, headers=self.headers) as response:
+                if response.status != 200:
+                    raise Exception(f"Could not verify chat session ownership ({response.status})")
+                return bool(await response.json())
+
+    async def simulation_belongs_to_user(self, simulation_id: str, user_id: str) -> bool:
+        """Check simulation ownership through simulation → scenario → profile."""
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{self.base_url}/rest/v1/simulations",
+                params={"simulation_id": f"eq.{simulation_id}", "select": "scenario_id", "limit": "1"},
+                headers=self.headers,
+            ) as response:
+                if response.status != 200:
+                    raise Exception(f"Could not verify simulation ownership ({response.status})")
+                simulations = await response.json()
+            if not simulations:
+                return False
+            async with session.get(
+                f"{self.base_url}/rest/v1/scenarios",
+                params={"scenario_id": f"eq.{simulations[0]['scenario_id']}", "select": "profile_id", "limit": "1"},
+                headers=self.headers,
+            ) as response:
+                if response.status != 200:
+                    raise Exception(f"Could not verify scenario ownership ({response.status})")
+                scenarios = await response.json()
+            if not scenarios:
+                return False
+            return await self.profile_belongs_to_user(scenarios[0]["profile_id"], user_id)
+
     async def update_business_profile(
         self,
         profile_id: str,

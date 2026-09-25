@@ -258,6 +258,16 @@ class BusinessProfileResponse(BaseModel):
     created_at: datetime
 
 
+async def _require_owned_profile(client: SupabaseClient, profile_id: str, user: dict) -> None:
+    if not await client.profile_belongs_to_user(profile_id, user["sub"]):
+        raise HTTPException(status_code=404, detail="Business profile not found")
+
+
+async def _require_owned_chat_session(client: SupabaseClient, session_id: str, user: dict) -> None:
+    if not await client.chat_session_belongs_to_user(session_id, user["sub"]):
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+
 @app.get("/api/health")
 async def health_check():
     """Detailed health check."""
@@ -561,7 +571,7 @@ async def get_me(current_user: dict = Depends(get_current_user)):
 
 @app.post("/api/business/analyze", response_model=CustomerProfileResponse)
 @limiter.limit(SUGGEST_RATE_LIMIT)
-async def analyze_customer_profile(request: Request, business_data: BusinessAnalyzeRequest):
+async def analyze_customer_profile(request: Request, business_data: BusinessAnalyzeRequest, current_user: dict = Depends(get_current_user)):
     """
     Analyze business information and infer customer profile using AI.
     
@@ -628,6 +638,7 @@ async def analyze_customer_profile(request: Request, business_data: BusinessAnal
 @app.post("/api/business/profile", response_model=BusinessProfileResponse)
 async def create_business_profile(
     business_data: BusinessProfileCreate,
+    current_user: dict = Depends(get_current_user),
 ):
     """
     Create a new business profile with AI-generated customer analysis.
@@ -638,6 +649,8 @@ async def create_business_profile(
     3. Returns the complete profile with AI analysis
     """
     try:
+        if business_data.user_id != current_user["sub"]:
+            raise HTTPException(status_code=403, detail="User identity does not match the authenticated account")
         # Initialize customer profiler
         profiler = CustomerProfiler()
         
@@ -690,6 +703,8 @@ async def create_business_profile(
             created_at=datetime.fromisoformat(saved_profile['created_at'].replace('Z', '+00:00'))
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"[ERROR] Failed to create business profile: {e}")
         import traceback
@@ -701,12 +716,14 @@ async def create_business_profile(
 
 
 @app.get("/api/business/profile/user/{user_id}", response_model=Optional[BusinessProfileResponse])
-async def get_profile_by_user(user_id: str):
+async def get_profile_by_user(user_id: str, current_user: dict = Depends(get_current_user)):
     """
     Return the most recent business profile for a user, or 404 if none exists.
     Used after login to decide whether to show onboarding or go straight to dashboard.
     """
     try:
+        if user_id != current_user["sub"]:
+            raise HTTPException(status_code=404, detail="Business profile not found")
         supabase_client = SupabaseClient()
         profiles = await supabase_client.list_business_profiles(user_id)
         if not profiles:
@@ -737,10 +754,11 @@ async def get_profile_by_user(user_id: str):
 
 
 @app.get("/api/business/profile/{profile_id}", response_model=BusinessProfileResponse)
-async def get_business_profile(profile_id: str):
+async def get_business_profile(profile_id: str, current_user: dict = Depends(get_current_user)):
     """Retrieve a business profile by ID."""
     try:
         supabase_client = SupabaseClient()
+        await _require_owned_profile(supabase_client, profile_id, current_user)
         profile = await supabase_client.get_business_profile(profile_id)
         if not profile:
             raise HTTPException(status_code=404, detail="Business profile not found")
@@ -764,10 +782,13 @@ async def get_business_profile(profile_id: str):
 
 
 @app.put("/api/business/profile/{profile_id}", response_model=BusinessProfileResponse)
-async def update_business_profile(profile_id: str, business_data: BusinessProfileCreate):
+async def update_business_profile(profile_id: str, business_data: BusinessProfileCreate, current_user: dict = Depends(get_current_user)):
     """Update an existing business profile."""
     try:
         supabase_client = SupabaseClient()
+        await _require_owned_profile(supabase_client, profile_id, current_user)
+        if business_data.user_id != current_user["sub"]:
+            raise HTTPException(status_code=403, detail="User identity does not match the authenticated account")
         updated = await supabase_client.update_business_profile(
             profile_id=profile_id,
             business_name=business_data.business_name,
@@ -793,6 +814,8 @@ async def update_business_profile(profile_id: str, business_data: BusinessProfil
             customer_profile=None,
             created_at=datetime.fromisoformat(updated['created_at'].replace('Z', '+00:00'))
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -813,13 +836,19 @@ class ChatMessageSave(BaseModel):
 
 
 @app.post("/api/chat/message")
-async def save_chat_message(body: ChatMessageSave):
+async def save_chat_message(body: ChatMessageSave, current_user: dict = Depends(get_current_user)):
     """Save a chat message. Creates a session if session_id is not provided."""
     try:
         supabase = SupabaseClient()
+        if body.user_id != current_user["sub"]:
+            raise HTTPException(status_code=403, detail="User identity does not match the authenticated account")
+        if body.profile_id:
+            await _require_owned_profile(supabase, body.profile_id, current_user)
         session_id = body.session_id
+        if session_id:
+            await _require_owned_chat_session(supabase, session_id, current_user)
         if not session_id:
-            session_id = await supabase.create_chat_session(body.user_id, body.profile_id)
+            session_id = await supabase.create_chat_session(current_user["sub"], body.profile_id)
         
         if session_id:
             await supabase.save_chat_message(
@@ -830,17 +859,22 @@ async def save_chat_message(body: ChatMessageSave):
             )
         
         return {"session_id": session_id}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/chat/session/{session_id}/messages")
-async def get_chat_messages(session_id: str):
+async def get_chat_messages(session_id: str, current_user: dict = Depends(get_current_user)):
     """Retrieve all messages for a chat session."""
     try:
         supabase = SupabaseClient()
+        await _require_owned_chat_session(supabase, session_id, current_user)
         messages = await supabase.list_chat_messages(session_id)
         return {"messages": messages}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -958,12 +992,14 @@ class SimulationStartRequest(BaseModel):
 
 @app.post("/api/simulation/suggest")
 @limiter.limit(SUGGEST_RATE_LIMIT)
-async def suggest_scenarios(request: Request, body: ScenarioSuggestRequest):
+async def suggest_scenarios(request: Request, body: ScenarioSuggestRequest, current_user: dict = Depends(get_current_user)):
     """
     Analyse the user's question and return suggested simulation scenarios.
     Returns 422 with a user-friendly message if the question is off-topic.
     """
     try:
+        if body.chat_session_id:
+            await _require_owned_chat_session(SupabaseClient(), body.chat_session_id, current_user)
         agent = ScenarioSuggestionAgent()
 
         result = await agent.analyze_question(
@@ -996,12 +1032,20 @@ async def suggest_scenarios(request: Request, body: ScenarioSuggestRequest):
 
 @app.post("/api/simulation/start")
 @limiter.limit(SIMULATION_RATE_LIMIT)
-async def start_simulation(request: Request, body: SimulationStartRequest):
+async def start_simulation(request: Request, body: SimulationStartRequest, current_user: dict = Depends(get_current_user)):
     """
     Create agents from the business profile and start the simulation.
     Returns simulation_id and initial agent list.
     """
     try:
+        if body.user_id != current_user["sub"]:
+            raise HTTPException(status_code=403, detail="User identity does not match the authenticated account")
+        if not body.profile_id:
+            raise HTTPException(status_code=400, detail="A business profile is required to start a simulation")
+        supabase_client = SupabaseClient()
+        await _require_owned_profile(supabase_client, body.profile_id, current_user)
+        if body.chat_session_id:
+            await _require_owned_chat_session(supabase_client, body.chat_session_id, current_user)
         sim_id = str(uuid.uuid4())
 
         # Get business profile — always prefer database (authoritative source)
@@ -1010,7 +1054,6 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
         if body.profile_id:
             # Fetch from database when profile_id is provided
             print(f"[INFO] Fetching business profile from database: {body.profile_id}")
-            supabase_client = SupabaseClient()
             db_profile = await supabase_client.get_business_profile(body.profile_id)
             if db_profile:
                 print(f"[DEBUG] Raw DB customer_type: {db_profile.get('customer_type')}")
@@ -1094,6 +1137,7 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
             # Store simulation state and kick off
             _active_sims[sim_id] = {
                 "sim_id":         sim_id,
+                "user_id":        current_user["sub"],
                 
                 "scenario":       body.scenario,
                 "business_profile": business_profile_dict,
@@ -1339,6 +1383,7 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
         # Store simulation state
         _active_sims[sim_id] = {
             "sim_id":         sim_id,
+            "user_id":        current_user["sub"],
             
             "scenario":       body.scenario,
             "business_profile": business_profile_dict,
@@ -1370,6 +1415,8 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
             "agents": agents,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"[ERROR] Start simulation failed: {e}")
         import traceback; traceback.print_exc()
@@ -1377,22 +1424,27 @@ async def start_simulation(request: Request, body: SimulationStartRequest):
 
 
 @app.get("/api/simulation/history/{profile_id}")
-async def get_simulation_history(profile_id: str):
+async def get_simulation_history(profile_id: str, current_user: dict = Depends(get_current_user)):
     """Get simulation history for a business profile from the database."""
     try:
         supabase_client = SupabaseClient()
+        await _require_owned_profile(supabase_client, profile_id, current_user)
         history = await supabase_client.list_simulation_history(profile_id)
         return {"history": history}
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"[ERROR] Failed to fetch simulation history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.delete("/api/simulation/history/{simulation_id}")
-async def delete_simulation_history(simulation_id: str):
+async def delete_simulation_history(simulation_id: str, current_user: dict = Depends(get_current_user)):
     """Delete a simulation from history."""
     try:
         supabase_client = SupabaseClient()
+        if not await supabase_client.simulation_belongs_to_user(simulation_id, current_user["sub"]):
+            raise HTTPException(status_code=404, detail="Simulation not found")
         success = await supabase_client.delete_simulation(simulation_id)
         if not success:
             raise HTTPException(status_code=404, detail="Simulation not found")
@@ -1404,11 +1456,13 @@ async def delete_simulation_history(simulation_id: str):
 
 
 @app.get("/api/simulation/{sim_id}/stream")
-async def stream_simulation(sim_id: str):
+async def stream_simulation(sim_id: str, current_user: dict = Depends(get_current_user)):
     """
     Server-Sent Events stream for real-time simulation updates.
     """
     if sim_id not in _active_sims:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+    if _active_sims[sim_id].get("user_id") != current_user["sub"]:
         raise HTTPException(status_code=404, detail="Simulation not found")
 
     async def event_generator():
@@ -1434,9 +1488,11 @@ async def stream_simulation(sim_id: str):
 
 
 @app.post("/api/simulation/{sim_id}/cancel")
-async def cancel_simulation(sim_id: str):
+async def cancel_simulation(sim_id: str, current_user: dict = Depends(get_current_user)):
     """Cancel a running simulation. The background task will stop at the next check point."""
     if sim_id not in _active_sims:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+    if _active_sims[sim_id].get("user_id") != current_user["sub"]:
         raise HTTPException(status_code=404, detail="Simulation not found")
     _active_sims[sim_id]["status"] = "aborted"
     try:
@@ -1448,12 +1504,15 @@ async def cancel_simulation(sim_id: str):
 
 
 @app.post("/api/simulation/cache/clear")
-async def clear_agent_cache():
-    """Clear cached agent personalities."""
-    global _agent_cache
-    count = len(_agent_cache)
-    _agent_cache.clear()
-    logger.info(f"Cleared agent cache ({count} entries)")
+async def clear_agent_cache(current_user: dict = Depends(get_current_user)):
+    """Clear cached personalities belonging to the authenticated user's profiles."""
+    profiles = await SupabaseClient().list_business_profiles(current_user["sub"])
+    profile_ids = {str(profile.get("profile_id")) for profile in profiles}
+    owned_keys = [key for key, value in _agent_cache.items() if value.get("profile_id") in profile_ids]
+    for key in owned_keys:
+        _agent_cache.pop(key, None)
+    count = len(owned_keys)
+    logger.info(f"Cleared agent cache ({count} entries) for user {current_user['sub']}")
     return {"status": "cleared", "entries_removed": count}
 
 
@@ -1889,6 +1948,7 @@ async def _run_simulation_single(sim_id: str, run_number: int = 1) -> Dict[str, 
             _agent_cache[cache_key] = {
                 "agents": copy.deepcopy(agents),
                 "business_profile": business_profile,
+                "profile_id": sim.get("profile_id"),
             }
             print(f"[INFO] 💾 Cached {len(agents)} agent personalities (key: {cache_key[:8]}...)")
     

@@ -564,7 +564,7 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         email=current_user.get("email", ""),
         created_at=created_at,
         beta_access_expires_at=_iso_timestamp(
-            (current_user.get("user_metadata") or {}).get("beta_access_expires_at")
+            (current_user.get("app_metadata") or {}).get("beta_access_expires_at")
         ),
     )
 

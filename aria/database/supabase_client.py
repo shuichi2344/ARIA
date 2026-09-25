@@ -158,7 +158,7 @@ class SupabaseClient:
                     "id":            user.get("id", ""),
                     "email":         user.get("email", email),
                     "created_at":    user.get("created_at", datetime.now(timezone.utc).isoformat()),
-                    "beta_access_expires_at": (user.get("user_metadata") or {}).get("beta_access_expires_at"),
+                    "beta_access_expires_at": (user.get("app_metadata") or {}).get("beta_access_expires_at"),
                     "access_token":  body.get("access_token"),
                     "refresh_token": body.get("refresh_token"),
                 }

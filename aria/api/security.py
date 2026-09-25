@@ -123,6 +123,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials | None = De
         "role": "authenticated",
         "created_at": user.get("created_at"),
         "user_metadata": user.get("user_metadata") or {},
+        "app_metadata": user.get("app_metadata") or {},
     }
 
     # Check beta access expiration

@@ -14,7 +14,6 @@ pydantic==2.9.2
 pydantic-settings==2.5.2
 openai==1.82.0
 slowapi==0.1.9
-python-jose[cryptography]==3.3.0
 
 # Testing dependencies
 pytest==7.4.4

@@ -135,8 +135,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const text = await res.text().catch(() => '')
         if (text.includes('BETA_ACCESS_EXPIRED')) {
           console.log('[Session] Beta access expired — signing out')
+          // A full-page navigation is already underway; leave React state alone
+          // so the dashboard's generic null-session redirect cannot race it.
+          let savedSession: AriaSession | null = null
+          try {
+            const saved = localStorage.getItem('aria_session')
+            savedSession = saved ? JSON.parse(saved) as AriaSession : null
+          } catch { /* ignore malformed or already-cleared session data */ }
+          if (!savedSession || savedSession.access_token !== currentSession.access_token) return
           clearAllLocalStorage()
-          setSessionState(null)
           window.location.replace('/auth/error?reason=beta_expired')
         }
         return
@@ -171,19 +178,40 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!session?.access_token) return
 
-    // Immediate check on mount / token change
-    checkBetaAccess(session)
-
-    const interval = setInterval(() => {
-      // Read latest session from state (closure captures stale value so re-read from storage)
+    const checkSavedSession = () => {
       try {
         const raw = localStorage.getItem('aria_session')
         if (raw) checkBetaAccess(JSON.parse(raw) as AriaSession)
-      } catch { /* skip */ }
+      } catch { /* skip malformed local session data */ }
+    }
+
+    // Check immediately and again at the recorded expiry. The server remains
+    // authoritative; the timer just ensures an active tab checks promptly.
+    checkSavedSession()
+    const expiryTime = session.beta_access_expires_at
+      ? Date.parse(session.beta_access_expires_at)
+      : Number.NaN
+    const expiryTimer = Number.isFinite(expiryTime)
+      ? window.setTimeout(checkSavedSession, Math.max(0, expiryTime - Date.now()) + 250)
+      : undefined
+
+    const interval = setInterval(() => {
+      checkSavedSession()
     }, BETA_CHECK_INTERVAL_MS)
 
-    return () => clearInterval(interval)
-  }, [session?.access_token, checkBetaAccess])
+    const checkWhenActive = () => {
+      if (document.visibilityState === 'visible') checkSavedSession()
+    }
+    document.addEventListener('visibilitychange', checkWhenActive)
+    window.addEventListener('focus', checkWhenActive)
+
+    return () => {
+      clearInterval(interval)
+      if (expiryTimer !== undefined) clearTimeout(expiryTimer)
+      document.removeEventListener('visibilitychange', checkWhenActive)
+      window.removeEventListener('focus', checkWhenActive)
+    }
+  }, [session?.access_token, session?.beta_access_expires_at, checkBetaAccess])
 
   // ─── setSession / logout ──────────────────────────────────────────────────
   function setSession(s: AriaSession | null) {

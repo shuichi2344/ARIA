@@ -524,12 +524,14 @@ async def setup_password(request: Request, body: SetupPasswordRequest):
     try:
         supabase_client = SupabaseClient()
         
-        await supabase_client.update_user_password(body.access_token, body.new_password)
-        from jose import jwt
-        payload = jwt.get_unverified_claims(body.access_token)
-        user_id = payload.get("sub")
+        # Resolve identity through Supabase Auth, which validates the token.
+        # Do not trust an unverified JWT claim for a service-role database call.
+        user = await supabase_client.get_authenticated_user(body.access_token)
+        user_id = user.get("id") if user else None
         if not user_id:
             raise HTTPException(status_code=400, detail="This link is not a valid invitation.")
+
+        await supabase_client.update_user_password(body.access_token, body.new_password)
         
         # Set beta access expiration (7 days from now)
         await supabase_client.set_beta_access_expiration(user_id, days=7)
@@ -881,7 +883,7 @@ async def get_chat_messages(session_id: str, current_user: dict = Depends(get_cu
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000, proxy_headers=False)
 
 
 # ---------------------------------------------------------------------------
@@ -2930,4 +2932,4 @@ def _calc_spend(agent: Dict, price_change: float, business_profile: Optional[Dic
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000, proxy_headers=False)

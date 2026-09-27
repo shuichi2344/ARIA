@@ -64,5 +64,6 @@ if __name__ == "__main__":
         port=8000,
         reload=settings.debug,  # Only auto-reload in development
         log_level="debug" if settings.debug else "info",
-        use_colors=True
+        use_colors=True,
+        proxy_headers=False,  # Forwarded headers are handled by the trusted-proxy allowlist.
     )

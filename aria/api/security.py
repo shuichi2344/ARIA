@@ -14,6 +14,8 @@ OWASP references:
 
 import re
 import logging
+import ipaddress
+from functools import lru_cache
 from fastapi import Request, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -21,6 +23,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
+from aria.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -29,15 +32,54 @@ logger = logging.getLogger(__name__)
 # Rate Limiter Configuration
 # ---------------------------------------------------------------------------
 
+@lru_cache(maxsize=1)
+def _trusted_proxy_networks() -> tuple:
+    """Parse the explicitly trusted proxy addresses/CIDRs from configuration."""
+    configured = get_settings().trusted_proxy_ips
+    networks = []
+    for entry in configured.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError:
+            # Ignore malformed entries so an invalid setting never expands trust.
+            logger.error("Ignoring invalid TRUSTED_PROXY_IPS entry: %r", entry)
+    return tuple(networks)
+
+
+def _is_trusted_proxy(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return any(address.version == network.version and address in network for network in _trusted_proxy_networks())
+
+
 def _get_client_ip(request: Request) -> str:
-    """
-    Extract client IP, respecting X-Forwarded-For for reverse proxies.
-    Falls back to direct connection IP.
-    """
+    """Use forwarded client addresses only when the direct peer is trusted."""
+    remote_addr = get_remote_address(request)
+    try:
+        peer = ipaddress.ip_address(remote_addr)
+    except ValueError:
+        return remote_addr
+
+    if not _is_trusted_proxy(peer):
+        return remote_addr
+
     forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return get_remote_address(request)
+    if not forwarded:
+        return remote_addr
+
+    try:
+        chain = [ipaddress.ip_address(item.strip()) for item in forwarded.split(",")]
+    except ValueError:
+        # Malformed proxy metadata falls back to the connection peer.
+        return remote_addr
+
+    # Walk from the trusted edge inward. The first untrusted address is the
+    # client; any values the client supplied before it are ignored.
+    for address in reversed(chain):
+        if not _is_trusted_proxy(address):
+            return str(address)
+    return remote_addr
 
 
 # Initialize rate limiter with in-memory storage (suitable for single-instance)

@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     environment: str = Field(default="development", description="Environment (development/production)")
     debug: bool = Field(default=True, description="Debug mode")
     app_url: str = Field(default="http://localhost:3000", description="Frontend app URL for email links")
+    trusted_proxy_ips: str = Field(
+        default="",
+        description="Comma-separated trusted proxy IP addresses or CIDR ranges",
+    )
     
     # SMTP — no longer used; email delivery handled by Supabase Auth SMTP.
     # These fields are kept as ignored optionals to avoid breaking existing .env files.

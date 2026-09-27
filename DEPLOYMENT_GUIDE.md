@@ -50,7 +50,13 @@ You **CANNOT** deploy the Python backend to Vercel. Follow this guide step-by-st
    ENVIRONMENT=production
    DEBUG=false
    APP_URL=https://your-vercel-app.vercel.app
+   TRUSTED_PROXY_IPS=<comma-separated CIDRs for the backend's trusted ingress proxies>
    ```
+
+   `TRUSTED_PROXY_IPS` is optional for direct/local access. For a proxied production
+   deployment, configure it with the exact proxy addresses or CIDRs used by the
+   backend host. The API ignores `X-Forwarded-For` unless the direct connection
+   peer matches this allowlist. Do not use `*` or a broad network range.
 
 5. **Generate Domain**
    - Railway will give you a URL like: `https://aria-production.up.railway.app`

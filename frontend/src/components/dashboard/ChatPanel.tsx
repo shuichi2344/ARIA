@@ -75,6 +75,52 @@ interface Message {
   text?: string
   hint?: string
   showChipPrompt?: boolean
+  report?: any
+}
+
+function ReportCard({ report }: { report: any }) {
+  const risk = report?.risk_summary ?? {}
+  const breakdown = report?.archetype_breakdown ?? {}
+  const riskColors = risk.risk_level === 'High'
+    ? { background: '#fef2f2', border: '#fecaca' }
+    : risk.risk_level === 'Medium'
+      ? { background: '#fffbeb', border: '#fde68a' }
+      : { background: '#f0fdf4', border: '#bbf7d0' }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+      <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>📊 Simulation Report</div>
+      <div style={{ background: riskColors.background, padding: '0.6rem', borderRadius: 6, border: `1px solid ${riskColors.border}` }}>
+        <div style={{ fontWeight: 600, marginBottom: '0.3rem' }}>Risk Level: {risk.risk_level}</div>
+        <div style={{ fontSize: '0.8rem', marginBottom: '0.2rem' }}>• Churn rate: {risk.churn_rate}%</div>
+        <div style={{ fontSize: '0.8rem', marginBottom: '0.2rem' }}>• Visit rate: {risk.visit_rate}%</div>
+        <div style={{ fontSize: '0.8rem' }}>• Est. revenue: RM{Number(risk.estimated_revenue || 0).toFixed(2)}</div>
+      </div>
+      <div>
+        <div style={{ fontWeight: 600, marginBottom: '0.3rem' }}>{report.breakdown_type === 'personality' ? 'Personality Breakdown:' : 'Customer Breakdown:'}</div>
+        {Object.entries(breakdown).map(([level, rawData]) => {
+          const data = rawData as any
+          return <div key={level} style={{ fontSize: '0.8rem', marginBottom: '0.2rem' }}>• {level}: {data.visit_pct}% visit, {data.skip_pct}% skip, {data.churn_pct}% churn</div>
+        })}
+      </div>
+      {report.analysis && <div style={{ background: 'var(--gray-50)', padding: '0.5rem', borderRadius: 6, borderLeft: '3px solid var(--accent)' }}>
+        <div style={{ fontWeight: 600, fontSize: '0.8rem', marginBottom: '0.2rem' }}>Analysis:</div>
+        <div style={{ fontSize: '0.8rem', color: 'var(--gray-700)', whiteSpace: 'pre-wrap' }}>{report.analysis}</div>
+      </div>}
+      {(report.key_reasons || []).length > 0 && <div>
+        <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>Key Reasons for Skip/Churn:</div>
+        {report.key_reasons.map((reason: string, index: number) => <div key={index} style={{ fontSize: '0.8rem', marginBottom: '0.5rem', paddingLeft: '0.5rem', borderLeft: '2px solid var(--accent)' }}>{index + 1}. {reason}</div>)}
+      </div>}
+      {(report.recommendations || []).length > 0 && <div>
+        <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>Recommendations:</div>
+        {report.recommendations.map((recommendation: string, index: number) => <div key={index} style={{ fontSize: '0.8rem', marginBottom: '0.5rem', paddingLeft: '0.5rem', borderLeft: '2px solid var(--accent)' }}>{recommendation.replace(/\*\*/g, '')}</div>)}
+      </div>}
+      <div style={{ fontSize: '0.7rem', color: 'var(--gray-400)', fontStyle: 'italic', marginTop: '0.25rem' }}>
+        Revenue is estimated from your business price range, adjusted by the scenario's price change.
+      </div>
+      <button id="download-report-btn" type="button" style={{ alignSelf: 'center', width: '100%', marginTop: '0.25rem', padding: '0.5rem 0.85rem', borderRadius: 6, background: 'var(--accent)', color: '#fff', border: 'none', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}>📄 Download PDF</button>
+    </div>
+  )
 }
 
 // Generate unique message ID
@@ -532,40 +578,14 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
     ;(window as any).__ariaRestoreMessages = (savedMessages: Array<{ role: string; content: string; metadata?: any }>) => {
       if (!savedMessages || savedMessages.length === 0) return
       const restored: Message[] = savedMessages.map(m => {
-        // Report messages were saved with metadata.report — rebuild the rich HTML card
+        // Rebuild the report card from data using safe React text rendering.
         if (m.role === 'aria' && m.metadata?.report) {
           const report = m.metadata.report
           const risk = report.risk_summary
           if (risk) {
-            const breakdown = report.archetype_breakdown || {}
-            const recs = report.recommendations || []
-            const reportHtml = `<div style="display:flex;flex-direction:column;gap:0.75rem;">
-              <div style="font-weight:700;font-size:0.95rem;">📊 Simulation Report</div>
-              <div style="background:${risk.risk_level === 'High' ? '#fef2f2' : risk.risk_level === 'Medium' ? '#fffbeb' : '#f0fdf4'};padding:0.6rem;border-radius:6px;border:1px solid ${risk.risk_level === 'High' ? '#fecaca' : risk.risk_level === 'Medium' ? '#fde68a' : '#bbf7d0'};">
-                <div style="font-weight:600;margin-bottom:0.3rem;">Risk Level: ${risk.risk_level}</div>
-                <div style="font-size:0.8rem;">• Churn rate: ${risk.churn_rate}%</div>
-                <div style="font-size:0.8rem;">• Visit rate: ${risk.visit_rate}%</div>
-                <div style="font-size:0.8rem;">• Est. revenue: RM${Number(risk.estimated_revenue).toFixed(2)}</div>
-              </div>
-              <div>
-                <div style="font-weight:600;margin-bottom:0.3rem;">${report.breakdown_type === 'personality' ? 'Personality Breakdown:' : 'Customer Breakdown:'}</div>
-                ${Object.entries(breakdown).map(([level, data]: [string, any]) =>
-                  `<div style="font-size:0.8rem;">• ${level}: ${data.visit_pct}% visit, ${data.skip_pct}% skip, ${data.churn_pct}% churn</div>`
-                ).join('')}
-              </div>
-              ${report.analysis ? `<div style="background:var(--gray-50);padding:0.5rem;border-radius:6px;border-left:3px solid var(--accent);">
-                <div style="font-weight:600;font-size:0.8rem;margin-bottom:0.2rem;">Analysis:</div>
-                <div style="font-size:0.8rem;color:var(--gray-700);">${report.analysis}</div>
-              </div>` : ''}
-              ${(report.key_reasons || []).length > 0 ? `<div><div style="font-weight:600;margin-bottom:0.5rem;">Key Reasons for Skip/Churn:</div>
-                ${report.key_reasons.map((r: string, i: number) => `<div style="font-size:0.8rem;margin-bottom:0.5rem;padding-left:0.5rem;border-left:2px solid var(--accent);">${i + 1}. ${r}</div>`).join('')}</div>` : ''}
-              ${recs.length > 0 ? `<div><div style="font-weight:600;margin-bottom:0.5rem;">Recommendations:</div>${recs.map((r: string) => `<div style="font-size:0.8rem;margin-bottom:0.5rem;padding-left:0.5rem;border-left:2px solid var(--accent);">${r.replace(/\*\*/g, '')}</div>`).join('')}</div>` : ''}
-              ${report.disclaimer ? `<div style="font-size:0.7rem;color:var(--gray-400);font-style:italic;margin-top:0.25rem;">${report.disclaimer}</div>` : ''}
-              <button id="download-report-btn" style="margin-top:0.5rem;padding:0.4rem 0.75rem;border-radius:6px;background:var(--accent);color:#fff;border:none;font-size:0.78rem;font-weight:600;cursor:pointer;">📄 Download PDF</button>
-            </div>`
-            // Store in ref so PDF download works
+            // Store report data; never turn it into an HTML string.
             latestReportRef.current = report
-            return { id: generateMsgId(), role: 'aria' as const, text: reportHtml }
+            return { id: generateMsgId(), role: 'aria' as const, report }
           }
         }
         return {
@@ -613,52 +633,11 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
       (window as any).__ariaAddCompletionMessage = (summary: string, report?: any) => {
         if (report) {
           // Build rich report message
-          const risk = report.risk_summary
-          const breakdown = report.archetype_breakdown
-          const recs = report.recommendations || []
-          
-          let reportHtml = `<div style="display:flex;flex-direction:column;gap:0.75rem;">
-            <div style="font-weight:700;font-size:0.95rem;">📊 Simulation Report</div>
-            
-            <div style="background:${risk.risk_level === 'High' ? '#fef2f2' : risk.risk_level === 'Medium' ? '#fffbeb' : '#f0fdf4'};padding:0.6rem;border-radius:6px;border:1px solid ${risk.risk_level === 'High' ? '#fecaca' : risk.risk_level === 'Medium' ? '#fde68a' : '#bbf7d0'};">
-              <div style="font-weight:600;margin-bottom:0.3rem;">Risk Level: ${risk.risk_level}</div>
-              <div style="font-size:0.8rem;">• Churn rate: ${risk.churn_rate}%</div>
-              <div style="font-size:0.8rem;">• Visit rate: ${risk.visit_rate}%</div>
-              <div style="font-size:0.8rem;">• Est. revenue: RM${risk.estimated_revenue.toFixed(2)}</div>
-              <div style="font-size:0.68rem;color:var(--gray-500);margin-top:0.25rem;font-style:italic;">Revenue is estimated from your business price range, adjusted by the scenario's price change. Each visiting customer spends a random amount within your configured price range.</div>
-            </div>
-            
-            <div>
-              <div style="font-weight:600;margin-bottom:0.3rem;">${report.breakdown_type === 'personality' ? 'Personality Breakdown:' : 'Customer Breakdown:'}</div>
-              ${Object.entries(breakdown).map(([level, data]: [string, any]) => 
-                `<div style="font-size:0.8rem;">• ${level}: ${data.visit_pct}% visit, ${data.skip_pct}% skip, ${data.churn_pct}% churn</div>`
-              ).join('')}
-            </div>
-            
-            ${report.analysis ? `<div style="background:var(--gray-50);padding:0.5rem;border-radius:6px;border-left:3px solid var(--accent);">
-              <div style="font-weight:600;font-size:0.8rem;margin-bottom:0.2rem;">Analysis:</div>
-              <div style="font-size:0.8rem;color:var(--gray-700);">${report.analysis}</div>
-            </div>` : ''}
-            
-            ${report.key_reasons && report.key_reasons.length > 0 ? `<div>
-              <div style="font-weight:600;margin-bottom:0.5rem;">Key Reasons for Skip/Churn:</div>
-              ${report.key_reasons.map((r: string, i: number) => `<div style="font-size:0.8rem;margin-bottom:0.5rem;padding-left:0.5rem;border-left:2px solid var(--accent);">${i + 1}. ${r}</div>`).join('')}
-            </div>` : ''}
-            
-            <div>
-              <div style="font-weight:600;margin-bottom:0.5rem;">Recommendations:</div>
-              ${recs.map((r: string) => `<div style="font-size:0.8rem;margin-bottom:0.5rem;padding-left:0.5rem;border-left:2px solid var(--accent);">${r.replace(/\*\*/g, '')}</div>`).join('')}
-            </div>
-            
-            <div style="font-size:0.7rem;color:var(--gray-400);font-style:italic;margin-top:0.25rem;">${report.disclaimer}</div>
-            <button id="download-report-btn" style="margin-top:0.5rem;padding:0.4rem 0.75rem;border-radius:6px;background:var(--accent);color:#fff;border:none;font-size:0.78rem;font-weight:600;cursor:pointer;">📄 Download PDF</button>
-          </div>`
-          
           setMessages(p => {
             const reportMsg = {
               id: generateMsgId(),
               role: 'aria' as const,
-              text: reportHtml,
+              report,
             }
             // If the user is viewing history, append to the live snapshot instead
             // of the currently-displayed history view
@@ -1278,11 +1257,9 @@ export default function ChatPanel({ profile, onLaunch, onSimulationComplete, onR
                 fontSize: '0.875rem', lineHeight: 1.5,
                 color: m.role === 'user' ? 'white' : 'var(--gray-900)',
               }}>
-                {m.text && (
-                  m.text.startsWith('<div')
-                    ? <div style={{ margin: '0 0 0.4rem' }} dangerouslySetInnerHTML={{ __html: m.text }} />
-                    : <p style={{ margin: '0 0 0.4rem' }}>{m.text}</p>
-                )}
+                {m.report
+                  ? <ReportCard report={m.report} />
+                  : m.text && <p style={{ margin: '0 0 0.4rem', whiteSpace: 'pre-wrap' }}>{m.text}</p>}
                 {m.hint && (
                   <p style={{
                     margin: 0, fontSize: '0.8rem',

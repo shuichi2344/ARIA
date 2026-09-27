@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useMemo } from 'react'
 import type { FeedItem } from './types'
+import { htmlToText } from '@/lib/htmlToText'
 
 interface Props {
   items: FeedItem[]
@@ -189,8 +190,7 @@ export default function ActivityFeed({ items, onAgentClick, highlightedAgentId, 
                 background: DOT[item.type] ?? 'var(--gray-400)',
                 flexShrink: 0, marginTop: 4, display: 'inline-block',
               }} />
-              <span style={{ color: 'var(--gray-900)', flex: 1 }}
-                dangerouslySetInnerHTML={{ __html: item.html }} />
+              <span style={{ color: 'var(--gray-900)', flex: 1 }}>{htmlToText(item.html)}</span>
             </div>
           )
         })}

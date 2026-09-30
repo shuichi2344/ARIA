@@ -25,9 +25,9 @@
   --gray-700: #404040;
   --gray-900: #0f172a;
 
-  --font-family:  'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-family:  var(--font-inter), -apple-system, BlinkMacSystemFont, sans-serif;
   --font-cursive: 'Caveat', cursive;
-  --font-display: 'Space Grotesk', 'Inter', sans-serif;
+  --font-display: var(--font-inter), -apple-system, BlinkMacSystemFont, sans-serif;
 
   --radius-xs:   6px;
   --radius-sm:   8px;

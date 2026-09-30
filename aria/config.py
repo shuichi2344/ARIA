@@ -22,7 +22,6 @@ class Settings(BaseSettings):
     supabase_url: HttpUrl = Field(..., description="Supabase project URL")
     supabase_key: str = Field(..., description="Supabase service-role key (server-side only)")
     supabase_anon_key: Optional[str] = Field(None, description="Supabase anon/public key (for auth)")
-    supabase_db_password: str = Field(..., description="Supabase database password")
     supabase_jwt_secret: Optional[str] = Field(None, description="Supabase JWT secret (from project settings > API)")
     
     # DOSM API Configuration (optional)

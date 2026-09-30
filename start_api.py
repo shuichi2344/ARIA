@@ -5,6 +5,7 @@ Usage:
     python start_api.py
 """
 
+import os
 import uvicorn
 import sys
 import logging
@@ -35,13 +36,15 @@ logging.getLogger('aria.external.news_api').setLevel(logging.INFO)
 logging.getLogger('aria.external.dosm').setLevel(logging.INFO)
 
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", "8000"))
+
     print("=" * 70)
     print("🚀 Starting ARIA API Server")
     print("=" * 70)
     print()
-    print("📍 API will be available at: http://localhost:8000")
-    print("📖 API docs will be available at: http://localhost:8000/docs")
-    print("🔍 Health check: http://localhost:8000/api/health")
+    print(f"📍 API will be available at: http://localhost:{port}")
+    print(f"📖 API docs will be available at: http://localhost:{port}/docs")
+    print(f"🔍 Health check: http://localhost:{port}/api/health")
     print()
     print("💡 Make sure:")
     print("   - Ollama is running (for AI analysis)")
@@ -61,7 +64,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "aria.api.main:app",
         host="0.0.0.0",
-        port=8000,
+        port=port,
         reload=settings.debug,  # Only auto-reload in development
         log_level="debug" if settings.debug else "info",
         use_colors=True,

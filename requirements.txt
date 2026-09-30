@@ -31,9 +31,6 @@ websockets==13.1
 # Data processing
 networkx==3.2.1
 
-# Document OCR (LLMWhisperer for PDF/image text extraction)
-llmwhisperer-client==2.7.0
-
 # GPU monitoring (optional, for VRAM tracking)
 gputil==1.4.0
 

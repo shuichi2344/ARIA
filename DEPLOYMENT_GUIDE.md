@@ -13,15 +13,11 @@ You **CANNOT** deploy the Python backend to Vercel. Follow this guide step-by-st
 
 ## Step 1: Deploy Backend (Python FastAPI)
 
-⚠️ **Important**: Your app uses data science libraries (pandas, numpy, mesa) which need **~1-2GB RAM**. Render's free tier (512MB) won't work.
+⚠️ **Important**: This backend uses data science libraries and runs simulations. Measure memory use under a representative workload before choosing a small instance; the old 1–2 GB estimate was not measured under production load.
 
 ### Option A: Railway (⭐ RECOMMENDED)
 
-**Why Railway:**
-- ✅ Gives you **8GB RAM** on free tier (more than enough)
-- ✅ $5 free credit per month (enough for ~500 hours)
-- ✅ Easiest setup (auto-detects Python)
-- ✅ Great for data science apps
+**Railway plan note:** Railway Free provides 0.5 GB RAM per service after the trial. New accounts may receive a one-time trial credit; it is not a recurring $5 monthly credit. Hobby has a $5 monthly minimum that counts toward usage. Check [current Railway pricing](https://railway.com/pricing) before choosing a plan. Measure memory under simulation load before relying on Free.
 
 **Steps:**
 
@@ -37,6 +33,7 @@ You **CANNOT** deploy the Python backend to Vercel. Follow this guide step-by-st
    - Railway will auto-detect Python
    - Add environment variables (see list below)
    - Set start command: `python start_api.py`
+   - The app reads Railway's injected `PORT`; do not hard-code a separate port.
 
 4. **Add Environment Variables** (Settings → Variables):
    ```
@@ -50,9 +47,10 @@ You **CANNOT** deploy the Python backend to Vercel. Follow this guide step-by-st
    ENVIRONMENT=production
    DEBUG=false
    APP_URL=https://your-vercel-app.vercel.app
-   TRUSTED_PROXY_IPS=<comma-separated CIDRs for the backend's trusted ingress proxies>
    ```
 
+   `SUPABASE_DB_PASSWORD` is not needed; the app does not use a direct PostgreSQL connection.
+   Configure `ILMU_API_KEY` for the hosted LLM provider. The default Ollama URL points to `localhost`, which is the Railway container itself; set `OLLAMA_BASE_URL` to a reachable hosted Ollama service if you need that fallback.
    `TRUSTED_PROXY_IPS` is optional for direct/local access. For a proxied production
    deployment, configure it with the exact proxy addresses or CIDRs used by the
    backend host. The API ignores `X-Forwarded-For` unless the direct connection
@@ -69,16 +67,14 @@ You **CANNOT** deploy the Python backend to Vercel. Follow this guide step-by-st
 ### Option B: Render.com (⚠️ NOT FREE)
 
 **Why NOT free tier:**
-- ❌ Free tier = 512MB RAM (NOT enough for your app)
-- ❌ Your app needs ~1-2GB RAM (pandas, numpy, mesa)
-- ✅ Starter plan = $7/month (1GB RAM) - might work but tight
+- Plan limits and prices change; verify current memory and pricing with Render before choosing it.
 
-**If you want to use Render, you need the $7/month plan:**
+If you want to use Render, configure it as a Python web service:
 
 1. Go to [render.com](https://render.com)
 2. New → Web Service
 3. Connect GitHub repo
-4. Select **Starter ($7/month)** or higher
+4. Choose a plan with enough memory for your measured simulation workload
 5. Settings:
    - **Environment**: Python 3
    - **Build Command**: `pip install -r requirements.txt`
@@ -113,13 +109,11 @@ You **CANNOT** deploy the Python backend to Vercel. Follow this guide step-by-st
 
 | Platform | Free Tier RAM | Cost | Best For |
 |----------|---------------|------|----------|
-| **Railway** | 8GB | $5 credit → ~500 hours free | ⭐ Your app |
-| Render Free | 512MB | Free | ❌ Too small |
-| Render Starter | 1GB | $7/month | Your app (tight) |
-| Fly.io | 256MB × 3 | Free → Pay | Advanced users |
-| Heroku | 512MB | $7/month | Simple apps |
+| **Railway Free** | 0.5GB | $0 after trial; limited resources | Test deployments |
+| **Railway Hobby** | Configure to workload | $5/month minimum usage | Small always-on backend |
+| Other providers | Check current limits | Varies | Compare against measured workload |
 
-**Recommendation: Use Railway** - Best free tier for data science apps.
+Choose a Railway plan based on measured memory and runtime. Free is useful for a test deployment, but may not be enough for ARIA simulations.
 
 ---
 
@@ -148,11 +142,17 @@ APP_URL=https://your-frontend.vercel.app
 
 2. **Import Project** from GitHub
 
+   Set **Root Directory** to `frontend`. Leave framework, build command, and output directory at their Next.js defaults. `vercel-config.json` is not the recognized Vercel configuration filename and is not used by this setup.
+
 3. **Add Environment Variables** (Settings → Environment Variables):
    ```
    NEXT_PUBLIC_API_URL=https://your-railway-backend.up.railway.app
+   NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
    ```
-   ⚠️ **Important**: This must be your deployed backend URL from Step 1
+   ⚠️ Set these for Production (and Preview if needed). `NEXT_PUBLIC_*` values are included in the browser build; use only the Supabase anon/public key, never the service-role key. Redeploy after changing a variable.
+
+   Vercel Hobby is for personal, non-commercial use. Check [Vercel's plan terms](https://vercel.com/docs/plans/hobby) against your intended use; commercial usage requires an eligible paid plan under its [fair use guidelines](https://vercel.com/docs/limits/fair-use-guidelines).
 
 4. **Deploy**
    - Vercel will automatically build and deploy
@@ -277,67 +277,26 @@ Should return:
 
 ### Frontend (Vercel)
 - [ ] `NEXT_PUBLIC_API_URL` (your Railway/Render backend URL)
+- [ ] `NEXT_PUBLIC_SUPABASE_URL`
+- [ ] `NEXT_PUBLIC_SUPABASE_ANON_KEY` (anon/public key only)
 
 ---
 
 ## Cost Estimates
 
 ### Free Tier (Testing & Low Traffic)
-- **Railway**: $5 free credit/month = ~500 hours (~20 days) of runtime ⭐
-- **Vercel**: Free for hobby projects (100GB bandwidth)
+- **Railway**: $1/month of free resource credit after trial; 0.5 GB RAM per service. Check current limits and pricing.
+- **Vercel**: Hobby is free for personal, non-commercial projects; commercial usage requires an eligible paid plan.
 - **Supabase**: Free tier (500MB database, 50k auth users)
 - **Ilmu AI**: Pay per use (~$0.001-0.01 per request)
 
-**Monthly cost for free tier: $0** (until Railway credit runs out)
+Check provider pricing and your account's usage for current cost estimates.
 
-### Paid (Production with Regular Traffic)
-- **Railway**: ~$5-10/month (after free credit, depends on uptime)
-- **Vercel**: Free to $20/month (Pro if you need more bandwidth)
-- **Supabase**: Free to $25/month (upgrade if >500MB data)
-- **Ilmu AI**: ~$10-50/month (depends on LLM usage)
+### Cost planning
 
-**Estimated monthly cost: $15-85/month** (Railway + potential Supabase/Vercel upgrades)
+**Railway costs** depend on memory, CPU, and uptime. Trial credit is one-time and Free-plan monthly credit is limited. Use Railway's usage dashboard; do not assume the service automatically sleeps while idle.
 
-### 💡 Tips to Stay Free Longer
-
-**Railway credit optimization:**
-- Your app uses ~$0.01/hour when running
-- $5 credit = 500 hours = 20 days continuous uptime
-- **To extend:** Set up sleep mode (pause when inactive)
-- Railway auto-sleeps apps after 30 min inactivity (saves credit!)
-
-**Vercel (always free for hobby):**
-- 100GB bandwidth/month
-- Unlimited sites
-- Perfect for frontend
-
-**Supabase free tier:**
-- 500MB database (plenty for 100s of users)
-- 50k monthly active users
-- 2GB file storage
-
-### 🎯 Realistic Costs
-
-**Scenario 1: Testing/Demo (Low Traffic)**
-- Railway: Free ($5 credit lasts weeks)
-- Vercel: Free
-- Supabase: Free
-- Ilmu AI: ~$5/month
-- **Total: ~$5/month**
-
-**Scenario 2: Live Product (100 users/day)**
-- Railway: ~$10/month (always-on)
-- Vercel: Free
-- Supabase: Free
-- Ilmu AI: ~$20-30/month
-- **Total: ~$30-40/month**
-
-**Scenario 3: Popular Product (1000+ users/day)**
-- Railway: ~$15-20/month
-- Vercel: $20/month (Pro)
-- Supabase: $25/month (Pro)
-- Ilmu AI: ~$50-100/month
-- **Total: ~$110-165/month**
+Use the current [Railway pricing](https://railway.com/pricing), [Vercel plan terms](https://vercel.com/docs/plans), and your Supabase/LLM billing dashboards for estimates. Costs vary with uptime, resources, and model usage; the old estimates in this guide are not reliable.
 
 ---
 

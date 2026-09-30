@@ -8,8 +8,8 @@
 - 30 minutes
 
 ### The Plan
-1. Backend → Railway (8GB RAM free tier)
-2. Frontend → Vercel (free)
+1. Backend → Railway (Free is limited to 0.5 GB RAM after trial; check whether your simulation workload fits)
+2. Frontend → Vercel (Hobby is for personal, non-commercial use)
 3. Database → Supabase (already set up)
 
 ---
@@ -40,6 +40,9 @@ ENVIRONMENT=production
 DEBUG=false
 APP_URL=https://your-app.vercel.app
 ```
+
+The app reads Railway's injected `PORT` automatically. `SUPABASE_DB_PASSWORD` is not required because the backend does not use a direct PostgreSQL connection.
+Configure `ILMU_API_KEY` for the hosted LLM provider. The default Ollama URL points to the Railway container itself; if you need Ollama fallback, set `OLLAMA_BASE_URL` to a reachable hosted Ollama service.
 
 ### Step 3: Deploy (2 min)
 
@@ -83,9 +86,11 @@ In Vercel project settings, add:
 
 ```bash
 NEXT_PUBLIC_API_URL=https://your-railway-url.up.railway.app
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
 
-(Use the URL from Railway Step 3)
+Use the Railway URL from Step 3 and the Supabase anon/public key only. Never expose the service-role key in frontend variables. Set Vercel's Root Directory to `frontend`; redeploy after changing variables. Check [Vercel's Hobby terms](https://vercel.com/docs/plans/hobby) before offering ARIA for commercial use.
 
 ### Step 3: Deploy (3 min)
 
@@ -160,25 +165,18 @@ Open browser console (F12) → Network tab
 **Fix:** Verify Supabase redirect URLs are set correctly
 
 ### ❌ Backend is slow
-**Reason:** Railway free tier sleeps after 30min inactivity (saves credit)
-**Fix:** First request takes 10-20 seconds (wakes up server)
+**Fix:** Check Railway resource usage and deployment logs; startup and simulation latency depend on the selected plan and workload.
 
 ---
 
 ## Cost Summary
 
-### What's Free
-- ✅ Railway: $5 credit = ~500 hours (~20 days uptime)
-- ✅ Vercel: Unlimited (hobby plan)
-- ✅ Supabase: Up to 500MB data, 50k users
+### Plan notes
+- Railway provides limited Free resources after its trial; check current limits and usage.
+- Vercel Hobby is for personal, non-commercial use. Commercial usage may require a paid plan.
+- Check current Supabase and Ilmu AI pricing and usage in their dashboards.
 
-### After Free Credit
-- Railway: ~$10/month for always-on
-- Vercel: Still free (hobby plan)
-- Supabase: Still free (unless >500MB data)
-- LLM (Ilmu AI): ~$5-20/month depending on usage
-
-**Total: $15-30/month** for production app
+Review provider billing dashboards before making ARIA available to users; costs depend on resource use and LLM calls.
 
 ---
 

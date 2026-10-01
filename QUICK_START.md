@@ -22,7 +22,7 @@
 2. Click **"Start a New Project"**
 3. Select **"Deploy from GitHub repo"**
 4. Choose your **ARIA** repository
-5. Railway will auto-detect Python ✅
+5. Railway detects Python and reads `.python-version` (3.12) ✅
 
 ### Step 2: Add Environment Variables (5 min)
 

@@ -36,7 +36,7 @@ ARIA/
 
 ### Prerequisites
 
-- Python 3.12+
+- Python 3.12 (pinned for dependency compatibility)
 - Node.js 18+
 - Ollama (for local LLM fallback): https://ollama.ai
 - Supabase project (for database): https://supabase.com

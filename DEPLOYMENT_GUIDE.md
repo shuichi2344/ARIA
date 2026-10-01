@@ -31,6 +31,7 @@ You **CANNOT** deploy the Python backend to Vercel. Follow this guide step-by-st
 
 3. **Configure Build**
    - Railway will auto-detect Python
+   - The repository's `.python-version` pins Python to 3.12 so pinned pandas/NumPy dependencies use compatible wheels.
    - Add environment variables (see list below)
    - Set start command: `python start_api.py`
    - The app reads Railway's injected `PORT`; do not hard-code a separate port.

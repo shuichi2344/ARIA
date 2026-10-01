@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Eye, EyeOff, CheckCircle2, XCircle, Loader2, ArrowRight, ScrollText, X } from 'lucide-react'
 
@@ -18,7 +18,7 @@ function validatePassword(password: string): { isValid: boolean; errors: string[
   return { isValid: errors.length === 0, errors }
 }
 
-export default function SetupPasswordPage() {
+function SetupPasswordContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   
@@ -403,6 +403,14 @@ export default function SetupPasswordPage() {
       {/* Terms modal */}
       {showTerms && <TermsModal onClose={() => setShowTerms(false)} onAccept={() => { setAcceptedTerms(true); setShowTerms(false) }} />}
     </div>
+  )
+}
+
+export default function SetupPasswordPage() {
+  return (
+    <Suspense fallback={null}>
+      <SetupPasswordContent />
+    </Suspense>
   )
 }
 

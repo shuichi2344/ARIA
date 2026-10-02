@@ -30,6 +30,7 @@ websockets==13.1
 
 # Data processing
 networkx==3.2.1
+pyarrow==19.0.1
 
 # GPU monitoring (optional, for VRAM tracking)
 gputil==1.4.0

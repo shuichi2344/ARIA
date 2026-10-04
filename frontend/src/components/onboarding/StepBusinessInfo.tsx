@@ -247,7 +247,7 @@ export default function StepBusinessInfo({ data, update, onNext }: Props) {
 
       {/* USP */}
       <div style={{ ...S.formGroup, marginBottom: '1.5rem' }}>
-        <label style={S.label}>What makes your business unique? <span style={{ color: '#dc2626' }}>*</span></label>
+        <label style={S.label}>What does your business do, what does it sell, and what makes it unique? <span style={{ color: '#dc2626' }}>*</span></label>
         <textarea
           rows={4} value={data.uniqueSellingPoints} required maxLength={2000}
           aria-invalid={Boolean(errors.uniqueSellingPoints)}

@@ -137,6 +137,7 @@ export default function StepBusinessInfo({ data, update, onNext }: Props) {
     const e: Record<string, string> = {}
     if (!data.businessName.trim()) e.businessName = 'Business name is required'
     if (!data.businessType)        e.businessType  = 'Please select a business type'
+    if (!data.uniqueSellingPoints.trim()) e.uniqueSellingPoints = 'Please describe what makes your business unique'
     setErrors(e)
     return !Object.keys(e).length
   }
@@ -246,15 +247,21 @@ export default function StepBusinessInfo({ data, update, onNext }: Props) {
 
       {/* USP */}
       <div style={{ ...S.formGroup, marginBottom: '1.5rem' }}>
-        <label style={S.label}>What makes your business unique?</label>
+        <label style={S.label}>What makes your business unique? <span style={{ color: '#dc2626' }}>*</span></label>
         <textarea
-          rows={3} value={data.uniqueSellingPoints}
-          onChange={e => update({ uniqueSellingPoints: e.target.value })}
-          placeholder="e.g., 'Authentic family recipes', 'Wholesale prices for workshops', 'Fast service'"
-          style={{ ...S.input, resize: 'none', ...(uspFocus ? focusStyle : {}) }}
+          rows={4} value={data.uniqueSellingPoints} required maxLength={2000}
+          aria-invalid={Boolean(errors.uniqueSellingPoints)}
+          onChange={e => {
+            update({ uniqueSellingPoints: e.target.value })
+            setErrors(p => ({ ...p, uniqueSellingPoints: '' }))
+          }}
+          placeholder="Tell us what customers can get from your business that they may not find elsewhere. For example: signature products, ingredients or sourcing, pricing, customisation, expertise, service speed, or a guarantee."
+          style={{ ...(errors.uniqueSellingPoints ? S.inputError : S.input), resize: 'vertical', ...(uspFocus ? focusStyle : {}) }}
           onFocus={() => setUspFocus(true)} onBlur={() => setUspFocus(false)}
         />
-        <span style={S.helpText}>Your unique selling points help our AI understand your business better</span>
+        {errors.uniqueSellingPoints
+          ? <span style={S.errorText}>{errors.uniqueSellingPoints}</span>
+          : <span style={S.helpText}>Add as much detail as you can—specific products, ingredients, prices, service, expertise, or customer benefits help ARIA create a more accurate profile and simulation. Avoid broad claims like “great quality” unless you explain what makes it great.</span>}
       </div>
 
       <div style={S.formActions}>

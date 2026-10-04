@@ -211,13 +211,22 @@ class BusinessAnalyzeRequest(BaseModel):
     location: str = Field(..., min_length=1, max_length=200)
     district: Optional[str] = Field(None, max_length=100)
     years_operating: Optional[int] = Field(None, ge=0, le=200)
-    unique_selling_points: Optional[str] = Field(None, max_length=2000)
+    unique_selling_points: str = Field(..., min_length=1, max_length=2000)
 
     @field_validator("business_name", "business_type", "location")
     @classmethod
     def sanitize_fields(cls, v: str) -> str:
         check_for_injection(v, "business field")
         return sanitize_text(v, max_length=200)
+
+    @field_validator("unique_selling_points")
+    @classmethod
+    def validate_unique_selling_points(cls, v: str) -> str:
+        value = v.strip()
+        if not value:
+            raise ValueError("Please describe what makes your business unique")
+        check_for_injection(value, "unique selling points")
+        return sanitize_text(value, max_length=2000)
 
 
 class BusinessProfileCreate(BaseModel):
@@ -229,10 +238,19 @@ class BusinessProfileCreate(BaseModel):
     location: str = Field(..., min_length=1, max_length=200)
     district: Optional[str] = Field(None, max_length=100)
     years_operating: Optional[int] = Field(None, ge=0, le=200)
-    unique_selling_points: Optional[str] = Field(None, max_length=2000)
+    unique_selling_points: str = Field(..., min_length=1, max_length=2000)
     price_range_min: Optional[float] = Field(None, ge=0, le=1000000)
     price_range_max: Optional[float] = Field(None, ge=0, le=1000000)
     customer_profile: Optional[Dict[str, Any]] = None
+
+    @field_validator("unique_selling_points")
+    @classmethod
+    def validate_unique_selling_points(cls, v: str) -> str:
+        value = v.strip()
+        if not value:
+            raise ValueError("Please describe what makes your business unique")
+        check_for_injection(value, "unique selling points")
+        return sanitize_text(value, max_length=2000)
 
 
 class CustomerProfileResponse(BaseModel):

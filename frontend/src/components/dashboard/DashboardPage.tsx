@@ -394,7 +394,21 @@ export default function DashboardPage({ session }: Props) {
             fontSize: '0.82rem', lineHeight: 1.45,
           }}
         >
-          <span aria-hidden="true" style={{ fontSize: '1rem', lineHeight: 1 }}>⚠</span>
+          <span
+            aria-hidden="true"
+            style={{
+              width: 0, height: 0, flex: '0 0 auto', marginTop: 2,
+              borderLeft: '9px solid transparent',
+              borderRight: '9px solid transparent',
+              borderBottom: '16px solid #f59e0b',
+              position: 'relative',
+            }}
+          >
+            <span style={{
+              position: 'absolute', left: -1, top: 4,
+              color: '#fffbeb', fontSize: 9, fontWeight: 700, lineHeight: 1,
+            }}>!</span>
+          </span>
           <span style={{ flex: 1 }}>
             <strong style={{ display: 'block', marginBottom: '0.15rem' }}>
               Beta access expires {betaDaysRemaining === 1 ? 'within 24 hours' : `in ${betaDaysRemaining} days`}

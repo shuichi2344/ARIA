@@ -72,7 +72,7 @@ export default function StepReview({ data, isEditMode, onFinish, onBack }: Props
     } catch (e) {
       console.error('Profile save failed:', e)
       setError(isEditMode
-        ? 'Failed to update your existing profile. No new profile was created. Please try again.'
+        ? 'Failed to update your existing profile. Please try again.'
         : 'Failed to save profile. Please try again.')
     } finally {
       setSaving(false)

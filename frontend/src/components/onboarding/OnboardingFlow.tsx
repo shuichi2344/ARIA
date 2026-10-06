@@ -164,7 +164,7 @@ export default function OnboardingFlow() {
           {step === 1 && <StepBusinessInfo data={data} update={update} onNext={next} />}
           {step === 2 && <StepLocation     data={data} update={update} onNext={next} onBack={back} />}
           {step === 3 && <StepAnalysis     data={data} update={update} onNext={next} onBack={back} />}
-          {step === 4 && <StepReview       data={data} onFinish={finish} onBack={back} />}
+          {step === 4 && <StepReview       data={data} isEditMode={isEditMode} onFinish={finish} onBack={back} />}
         </div>
       </div>    </>
   )

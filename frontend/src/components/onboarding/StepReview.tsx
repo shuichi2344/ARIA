@@ -10,11 +10,12 @@ import * as S from './styles'
 
 interface Props {
   data: BusinessFormData
+  isEditMode: boolean
   onFinish: () => void
   onBack: () => void
 }
 
-export default function StepReview({ data, onFinish, onBack }: Props) {
+export default function StepReview({ data, isEditMode, onFinish, onBack }: Props) {
   const { session } = useSession()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -29,7 +30,7 @@ export default function StepReview({ data, onFinish, onBack }: Props) {
         return
       }
 
-      const existingProfileId = localStorage.getItem('aria_profile_id')
+      let existingProfileId = localStorage.getItem('aria_profile_id')
       const profilePayload = {
         user_id: session.id,
         business_name: data.businessName,
@@ -44,16 +45,20 @@ export default function StepReview({ data, onFinish, onBack }: Props) {
         customer_profile: data.customerProfile ?? undefined,
       }
 
+      if (isEditMode && !existingProfileId) {
+        const existingProfile = await api.getProfileByUser(session.id)
+        existingProfileId = existingProfile.id
+      }
+
       let result
-      if (existingProfileId) {
-        try {
-          result = await api.updateBusinessProfile(existingProfileId, profilePayload)
-        } catch {
-          // Profile ID in localStorage is stale (wiped DB, migration, etc.) — create fresh
-          console.warn('Update failed for', existingProfileId, '— falling back to create')
-          localStorage.removeItem('aria_profile_id')
-          result = await api.createBusinessProfile(profilePayload)
+      if (isEditMode) {
+        if (!existingProfileId) {
+          throw new Error('No existing business profile was found to update.')
         }
+        // Never turn a failed edit into a create: surface the error and preserve the existing profile.
+        result = await api.updateBusinessProfile(existingProfileId, profilePayload)
+      } else if (existingProfileId) {
+        result = await api.updateBusinessProfile(existingProfileId, profilePayload)
       } else {
         result = await api.createBusinessProfile(profilePayload)
       }
@@ -66,7 +71,9 @@ export default function StepReview({ data, onFinish, onBack }: Props) {
       onFinish()
     } catch (e) {
       console.error('Profile save failed:', e)
-      setError('Failed to save profile. Please try again.')
+      setError(isEditMode
+        ? 'Failed to update your existing profile. No new profile was created. Please try again.'
+        : 'Failed to save profile. Please try again.')
     } finally {
       setSaving(false)
     }

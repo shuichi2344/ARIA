@@ -901,7 +901,7 @@ async def get_chat_messages(session_id: str, current_user: dict = Depends(get_cu
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, proxy_headers=False)
+    uvicorn.run(app, host="127.0.0.1", port=8000, proxy_headers=False)
 
 
 # ---------------------------------------------------------------------------
@@ -942,7 +942,7 @@ def _agent_cache_key(
         ",".join(sorted(business_size_constraints or [])),
         str(b2b_percentage or 0),
     ]
-    return hashlib.md5("|".join(parts).encode()).hexdigest()
+    return hashlib.md5("|".join(parts).encode(), usedforsecurity=False).hexdigest()
 
 
 class ScenarioSuggestRequest(BaseModel):
@@ -1151,8 +1151,8 @@ async def start_simulation(request: Request, body: SimulationStartRequest, curre
                 _active_sims[stale_id]["status"] = "aborted"
                 try:
                     _active_sims[stale_id]["events"].put_nowait(None)
-                except Exception:
-                    pass
+                except asyncio.QueueFull:
+                    logger.debug("Could not enqueue close signal for full simulation event queue %s", stale_id)
 
             # Store simulation state and kick off
             _active_sims[sim_id] = {
@@ -1397,8 +1397,8 @@ async def start_simulation(request: Request, body: SimulationStartRequest, curre
             # Signal the SSE stream to close
             try:
                 _active_sims[stale_id]["events"].put_nowait(None)
-            except Exception:
-                pass
+            except asyncio.QueueFull:
+                logger.debug("Could not enqueue close signal for full simulation event queue %s", stale_id)
 
         # Store simulation state
         _active_sims[sim_id] = {
@@ -1517,8 +1517,8 @@ async def cancel_simulation(sim_id: str, current_user: dict = Depends(get_curren
     _active_sims[sim_id]["status"] = "aborted"
     try:
         _active_sims[sim_id]["events"].put_nowait(None)
-    except Exception:
-        pass
+    except asyncio.QueueFull:
+        logger.debug("Could not enqueue close signal for full simulation event queue %s", sim_id)
     logger.info(f"Simulation {sim_id} cancelled by client")
     return {"status": "cancelled"}
 
@@ -2041,15 +2041,15 @@ async def _run_simulation_single(sim_id: str, run_number: int = 1) -> Dict[str, 
         same_income_peers = [pid for pid in income_groups_map.get(agent.income_level, []) if pid != agent.unique_id]
         other_peers = [a.unique_id for a in mesa_agents if a.unique_id != agent.unique_id and a.income_level != agent.income_level]
         
-        num_connections = random.randint(2, min(4, len(mesa_agents) - 1))
+        num_connections = random.randint(2, min(4, len(mesa_agents) - 1))  
         num_same = min(int(num_connections * 0.7) + 1, len(same_income_peers)) if same_income_peers else 0
         num_cross = min(num_connections - num_same, len(other_peers))
         
         chosen = []
         if same_income_peers:
-            chosen += random.sample(same_income_peers, min(num_same, len(same_income_peers)))
+            chosen += random.sample(same_income_peers, min(num_same, len(same_income_peers)))  # nosec B311: simulation sampling, not security
         if other_peers and num_cross > 0:
-            chosen += random.sample(other_peers, min(num_cross, len(other_peers)))
+            chosen += random.sample(other_peers, min(num_cross, len(other_peers)))  # nosec B311: simulation sampling, not security
         
         for pid in chosen:
             if pid not in social_network[agent.unique_id]:
@@ -2230,7 +2230,7 @@ async def _run_simulation_single(sim_id: str, run_number: int = 1) -> Dict[str, 
         # This is a flat compute-control gate, NOT a persona prior.
         # It prevents calling the LLM for every single agent while still letting
         # the LLM decide for the majority.
-        if random.random() < BUDGET_GATE_PROB:
+        if random.random() < BUDGET_GATE_PROB:  
             agent_label = f"{mesa_agent.income_level}" if is_price_scenario else f"{getattr(mesa_agent, 'personality_type', 'customer')}"
             print(f"  Agent {mesa_agent.unique_id} ({agent_label}, {current_decision}): "
                   f"budget gate skip (no LLM call)")
@@ -2917,7 +2917,7 @@ def _generate_b2b_agents(
         size = size_dist[i] if i < len(size_dist) else 'Small'
         segment = segments[i % len(segments)] if segments else 'Business'
         monthly_spend = avg_transaction * freq_mult * size_mult.get(size, 1.0)
-        monthly_spend *= random.uniform(0.8, 1.2)  # variance
+        monthly_spend *= random.uniform(0.8, 1.2)  # nosec B311: synthetic spend variation, not security
         
         agents.append({
             'income_level': size,  # repurposed: business size
@@ -2940,14 +2940,14 @@ def _calc_spend(agent: Dict, price_change: float, business_profile: Optional[Dic
         price_min = business_profile.get('price_range_min', 0)
         price_max = business_profile.get('price_range_max', 0)
         if price_min > 0 and price_max > 0:
-            base = random.uniform(price_min, price_max)
+            base = random.uniform(price_min, price_max)  
             return round(base * (1 + price_change), 2)
     
     # Fallback: income-based estimate
     base = {"B40": 12, "M40": 25, "T20": 45}.get(agent.get("income_level", "M40"), 20)
-    return round(base * (1 + price_change) * random.uniform(0.8, 1.2), 2)
+    return round(base * (1 + price_change) * random.uniform(0.8, 1.2), 2) 
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, proxy_headers=False)
+    uvicorn.run(app, host="127.0.0.1", port=8000, proxy_headers=False)

@@ -146,9 +146,6 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials | None = De
     if credentials is None:
         raise HTTPException(status_code=401, detail="Authentication required.")
     token = credentials.credentials
-    # Ask Supabase Auth to validate the token. Supabase projects can use either
-    # legacy HS256 secrets or asymmetric signing keys (ES256/RS256); hard-coding
-    # HS256 here rejects valid sessions from projects using the newer keys.
     from aria.database.supabase_client import SupabaseClient
     supabase_client = SupabaseClient()
     try:

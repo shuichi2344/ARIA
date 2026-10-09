@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://aria-fyp.vercel.app/sitemap.xml

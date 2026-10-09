@@ -2,7 +2,7 @@
 
 ## Overview
 
-ARIA uses **dynamic Monte Carlo simulation** with a **Weighted Composite Index (WCI)** to determine when simulation results have statistically converged. This approach saves LLM API costs and computation time by stopping as soon as results stabilize, rather than running a fixed number of iterations.
+ARIA uses **dynamic Monte Carlo simulation** with a **Weighted Composite Index (WCI)** to determine when simulation results have statistically converged. This approach saves LLM API costs and computation time by stopping as soon as results stabilize, rather than running a fixed number of iterations..
 
 ## The Problem
 

@@ -185,10 +185,6 @@ class DOSMClient:
                     f"Could not fetch live age data for {normalized_district}"
                 )
 
-            # Add spending patterns and payment preferences
-            result["spending_patterns"] = self._get_penang_spending_patterns(normalized_district)
-            result["payment_preferences"] = self._get_penang_payment_preferences(normalized_district)
-
             return result
 
         except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
@@ -341,52 +337,6 @@ class DOSMClient:
         except Exception as e:
             logger.error(f"Failed to fetch all Penang districts: {e}")
             return {}
-
-    # -------------------------------------------------------------------------
-    # Spending & Payment Patterns
-    # -------------------------------------------------------------------------
-
-    def _get_penang_spending_patterns(self, district: str) -> Dict[str, Any]:
-        """Get spending patterns for Penang districts."""
-        if district in ["Barat Daya", "Timur Laut"]:
-            return {
-                "food_beverage": {"percentage": 29.0, "avg_monthly_rm": 900, "description": "Food and beverages including dining out"},
-                "transport": {"percentage": 15.0, "avg_monthly_rm": 500, "description": "Transportation and fuel"},
-                "housing": {"percentage": 24.0, "avg_monthly_rm": 950, "description": "Rent, mortgage, and housing costs"},
-                "utilities": {"percentage": 8.0, "avg_monthly_rm": 250, "description": "Electricity, water, internet"},
-                "healthcare": {"percentage": 5.0, "avg_monthly_rm": 150, "description": "Medical expenses and insurance"},
-                "education": {"percentage": 6.0, "avg_monthly_rm": 200, "description": "Education and training"},
-                "recreation": {"percentage": 9.0, "avg_monthly_rm": 280, "description": "Entertainment and leisure"},
-                "others": {"percentage": 4.0, "avg_monthly_rm": 120, "description": "Other expenses"},
-            }
-        else:
-            return {
-                "food_beverage": {"percentage": 27.0, "avg_monthly_rm": 750, "description": "Food and beverages including dining out"},
-                "transport": {"percentage": 16.0, "avg_monthly_rm": 430, "description": "Transportation and fuel"},
-                "housing": {"percentage": 23.0, "avg_monthly_rm": 750, "description": "Rent, mortgage, and housing costs"},
-                "utilities": {"percentage": 9.0, "avg_monthly_rm": 240, "description": "Electricity, water, internet"},
-                "healthcare": {"percentage": 5.0, "avg_monthly_rm": 130, "description": "Medical expenses and insurance"},
-                "education": {"percentage": 6.0, "avg_monthly_rm": 160, "description": "Education and training"},
-                "recreation": {"percentage": 7.0, "avg_monthly_rm": 190, "description": "Entertainment and leisure"},
-                "others": {"percentage": 7.0, "avg_monthly_rm": 180, "description": "Other expenses"},
-            }
-
-    def _get_penang_payment_preferences(self, district: str) -> Dict[str, Any]:
-        """Get payment preferences for Penang districts."""
-        if district in ["Timur Laut", "Barat Daya"]:
-            return {
-                "cash": {"percentage": 38.0, "description": "Physical cash payments"},
-                "card": {"percentage": 32.0, "description": "Credit/debit card payments"},
-                "ewallet": {"percentage": 25.0, "description": "E-wallet (Touch 'n Go, GrabPay, etc.)"},
-                "online_banking": {"percentage": 5.0, "description": "Online banking transfers"},
-            }
-        else:
-            return {
-                "cash": {"percentage": 45.0, "description": "Physical cash payments"},
-                "card": {"percentage": 28.0, "description": "Credit/debit card payments"},
-                "ewallet": {"percentage": 22.0, "description": "E-wallet (Touch 'n Go, GrabPay, etc.)"},
-                "online_banking": {"percentage": 5.0, "description": "Online banking transfers"},
-            }
 
     # -------------------------------------------------------------------------
     # Income Estimation

@@ -193,11 +193,6 @@ User Question: "{user_question}"
                 pct = data.get('percentage', 0)
                 median = data.get('median_income_rm', 0)
                 prompt += f"  - {group}: {pct}% (median: RM{median})\n"
-        spending = economic_indicators.get('spending_patterns', {})
-        if spending:
-            food_bev = spending.get('food_beverage', {})
-            if food_bev:
-                prompt += f"Food & Beverage Spending: {food_bev.get('percentage', 0)}% of income (avg RM{food_bev.get('avg_monthly_rm', 0)}/month)\n"
 
     if holiday_context:
         prompt += f"\nMalaysia Public Holidays (Pulau Pinang):\n{holiday_context}\n"

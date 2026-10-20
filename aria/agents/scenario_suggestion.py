@@ -104,7 +104,6 @@ class ScenarioSuggestionAgent:
             context["economic_indicators"] = {
                 "district": district,
                 "income_distribution": demographics.get("income_distribution", {}),
-                "spending_patterns": demographics.get("spending_patterns", {}),
                 "source": demographics.get("source", "DOSM")
             }
             

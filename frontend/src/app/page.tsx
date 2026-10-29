@@ -78,30 +78,16 @@ export default function LandingPage() {
     const type = params.get('type') || hashParams.get('type')
     
     console.log('[Home] Auth check:', { 
-      hasToken: params.has('token_hash') || hasAccessToken,
+      hasToken: params.has('code') || params.has('token_hash') || hasAccessToken,
       type,
       hash: hash.substring(0, 50) 
     })
     
     // Check for Supabase auth tokens
-    if (params.has('token_hash') || hasAccessToken) {
-      console.log('[Home] Supabase auth token detected, type:', type)
-      
-      // Redirect to appropriate page based on type, preserving the hash
-      if (type === 'invite') {
-        console.log('[Home] Invitation detected, redirecting to setup-password')
-        router.push(`/auth/setup-password${window.location.search}${hash}`)
-        return
-      } else if (type === 'recovery') {
-        console.log('[Home] Password recovery detected, redirecting to reset-password')
-        router.push(`/auth/reset-password${window.location.search}${hash}`)
-        return
-      } else if (hasAccessToken) {
-        // Generic access token - redirect to setup-password as fallback
-        console.log('[Home] Generic access token, redirecting to setup-password')
-        router.push(`/auth/setup-password${window.location.search}${hash}`)
-        return
-      }
+    if (params.has('code') || params.has('token_hash') || hasAccessToken) {
+      console.log('[Home] Supabase auth token detected; forwarding to the verification callback')
+      router.replace(`/auth/finish${window.location.search}${hash}`)
+      return
     }
     
     // Handle ?auth= query param (from /auth/login redirect)

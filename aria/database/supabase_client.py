@@ -158,6 +158,7 @@ class SupabaseClient:
                     "id":            user.get("id", ""),
                     "email":         user.get("email", email),
                     "created_at":    user.get("created_at", datetime.now(timezone.utc).isoformat()),
+                    "email_confirmed": user.get("email_confirmed_at") is not None,
                     "access_token":  body.get("access_token"),
                     "refresh_token": body.get("refresh_token"),
                 }

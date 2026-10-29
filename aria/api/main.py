@@ -407,6 +407,8 @@ async def login(request: Request, body: UserLogin):
     try:
         supabase_client = SupabaseClient()
         user = await supabase_client.login_user(body.email, body.password)
+        if not user.get("email_confirmed"):
+            raise HTTPException(status_code=403, detail="EMAIL_NOT_CONFIRMED")
         
         return UserResponse(
             id=user["id"],

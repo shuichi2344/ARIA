@@ -60,32 +60,12 @@ export default function FinishAuthPage() {
           type,
         }).toString()
 
-        if (type === 'invite') {
-          window.location.replace(`/auth/setup-password#${authFragment}`)
-          return
-        }
-
         if (type === 'recovery') {
           window.location.replace(`/auth/reset-password#${authFragment}`)
           return
         }
 
-        if (type === 'signup' || type === 'email_confirmation') {
-          window.location.replace('/?auth=login')
-          return
-        }
-
-        const user = session.user
-        localStorage.setItem('aria_session', JSON.stringify({
-          id: user.id,
-          email: user.email || '',
-          created_at: user.created_at,
-          access_token: session.access_token,
-          refresh_token: session.refresh_token,
-          email_confirmed: Boolean(user.email_confirmed_at),
-        }))
-
-        window.location.replace('/dashboard')
+        window.location.replace('/?auth=login')
       } catch (error) {
         console.error('[Auth Finish] Link verification failed:', error)
         if (!cancelled) {

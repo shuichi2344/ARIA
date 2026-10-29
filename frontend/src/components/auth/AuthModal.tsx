@@ -108,6 +108,7 @@ export default function AuthModal({ defaultTab = 'login', onClose, onSuccess }: 
   const [regPassword, setRegPassword] = useState('')
   const [regConfirm, setRegConfirm] = useState('')
   const [regError, setRegError] = useState('')
+  const [regSuccess, setRegSuccess] = useState(false)
   const [regLoading, setRegLoading] = useState(false)
   const [regTerms, setRegTerms] = useState(false)
   const [showTerms, setShowTerms] = useState(false)
@@ -151,6 +152,7 @@ export default function AuthModal({ defaultTab = 'login', onClose, onSuccess }: 
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault()
     setRegError('')
+    setRegSuccess(false)
     if (regPassword !== regConfirm) { setRegError('Passwords do not match.'); return }
     const pwError = validatePassword(regPassword)
     if (pwError) { setRegError(pwError); return }
@@ -164,11 +166,11 @@ export default function AuthModal({ defaultTab = 'login', onClose, onSuccess }: 
       })
       const data = await res.json()
       if (!res.ok) { setRegError(data.detail || 'Registration failed.'); return }
-      if (data.email_confirmed === false || !data.access_token) {
-        setRegError('Account created! Please check your email to confirm your address before logging in.')
+      if (data.email_confirmed !== false) {
+        setRegError('Email confirmation is disabled in Supabase. Enable Confirm Email in Authentication settings so new accounts must verify their address before signing in.')
         return
       }
-      onSuccess(data)
+      setRegSuccess(true)
     } catch {
       setRegError('Could not reach the server. Make sure the API is running.')
     } finally {
@@ -267,7 +269,7 @@ export default function AuthModal({ defaultTab = 'login', onClose, onSuccess }: 
           {(['login', 'register'] as const).map(t => (
             <button
               key={t}
-              onClick={() => setTab(t)}
+              onClick={() => { setTab(t); setRegSuccess(false); setRegError('') }}
               style={{
                 flex: 1,
                 background: 'none', border: 'none',
@@ -383,6 +385,7 @@ export default function AuthModal({ defaultTab = 'login', onClose, onSuccess }: 
               </span>
             </label>
             {regError && <AuthError>{regError}</AuthError>}
+            {regSuccess && <AuthSuccess>Account created. Check your email and confirm your address before signing in.</AuthSuccess>}
             <SubmitBtn loading={regLoading}>Create Account</SubmitBtn>
           </form>
         )}
@@ -454,6 +457,18 @@ function AuthError({ children }: { children: React.ReactNode }) {
     <div style={{
       background: '#fef2f2', border: '1px solid #fecaca',
       color: '#dc2626', borderRadius: '6px',
+      padding: '0.6rem 0.9rem', fontSize: '0.875rem',
+    }}>
+      {children}
+    </div>
+  )
+}
+
+function AuthSuccess({ children }: { children: React.ReactNode }) {
+  return (
+    <div role="status" style={{
+      background: '#f0fdf4', border: '1px solid #bbf7d0',
+      color: '#166534', borderRadius: '6px',
       padding: '0.6rem 0.9rem', fontSize: '0.875rem',
     }}>
       {children}

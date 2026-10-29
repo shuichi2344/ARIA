@@ -34,28 +34,33 @@ function SetupPasswordContent() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
   
-  const [accessToken, setAccessToken] = useState<string | null>(null)
+  const [accessToken] = useState<string | null>(null)
+  const redirecting = true
   
-  // Extract access_token from URL fragment (#access_token=...)
+  // Password setup was only used by invitations. Route confirmation tokens
+  // through the shared callback and send this legacy route back to sign-in.
   useEffect(() => {
-    // Check URL hash for Supabase invitation token
     const hash = window.location.hash
-    if (hash) {
-      const params = new URLSearchParams(hash.substring(1))
-      const token = params.get('access_token')
-      if (token) {
-        setAccessToken(token)
-        // Clean URL
-        window.history.replaceState({}, document.title, window.location.pathname)
-      }
+    const hashParams = new URLSearchParams(hash.replace(/^#/, ''))
+    const hasAuthPayload = searchParams.has('code')
+      || searchParams.has('token_hash')
+      || searchParams.has('access_token')
+      || hashParams.has('access_token')
+
+    if (hasAuthPayload) {
+      router.replace(`/auth/finish${window.location.search}${hash}`)
+    } else {
+      router.replace('/?auth=login')
     }
-    
-    // Also check query params as fallback
-    const token = searchParams?.get('access_token')
-    if (token) {
-      setAccessToken(token)
-    }
-  }, [searchParams])
+  }, [router, searchParams])
+
+  if (redirecting) {
+    return (
+      <main style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: '1.5rem' }}>
+        <p role="status" style={{ color: '#4b5563' }}>Returning to sign in…</p>
+      </main>
+    )
+  }
   
   const passwordValidation = validatePassword(password)
   const passwordsMatch = password === confirmPassword && password.length > 0

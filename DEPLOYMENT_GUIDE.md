@@ -178,18 +178,23 @@ After getting your Vercel URL, **go back to your backend** and:
 
 1. **Go to Supabase Dashboard** → Authentication → URL Configuration
 
-2. **Add Redirect URLs**:
+2. **Go to Authentication → Providers → Email** and enable **Confirm Email**.
+   The API rejects unconfirmed accounts, but Supabase must send the confirmation
+   email and keep password sign-in disabled until the link is clicked.
+
+3. **Add Redirect URLs**:
    ```
+   https://your-vercel-app.vercel.app/auth/finish
    https://your-vercel-app.vercel.app/auth/reset-password
    https://your-vercel-app.vercel.app/auth/callback
    ```
 
-3. **Site URL**:
+4. **Site URL**:
    ```
    https://your-vercel-app.vercel.app
    ```
 
-4. **Test Authentication**:
+5. **Test Authentication**:
    - Sign up for a new account
    - Check email confirmation works
    - Test login flow
@@ -222,9 +227,10 @@ Should return:
 
 ### Full User Flow
 1. Sign up → Should receive email
-2. Confirm email → Should redirect to dashboard
-3. Complete onboarding → Should analyze business
-4. Run simulation → Should see agents and results
+2. Try signing in before confirmation → Should be rejected
+3. Confirm email → Should return to the sign-in form
+4. Sign in → Complete onboarding
+5. Run simulation → Should see agents and results
 
 ---
 

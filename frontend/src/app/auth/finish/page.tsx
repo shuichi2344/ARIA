@@ -70,6 +70,11 @@ export default function FinishAuthPage() {
           return
         }
 
+        if (type === 'signup' || type === 'email_confirmation') {
+          window.location.replace('/?auth=login')
+          return
+        }
+
         const user = session.user
         localStorage.setItem('aria_session', JSON.stringify({
           id: user.id,
@@ -80,9 +85,7 @@ export default function FinishAuthPage() {
           email_confirmed: Boolean(user.email_confirmed_at),
         }))
 
-        window.location.replace(type === 'signup' || type === 'email_confirmation'
-          ? '/onboarding'
-          : '/dashboard')
+        window.location.replace('/dashboard')
       } catch (error) {
         console.error('[Auth Finish] Link verification failed:', error)
         if (!cancelled) {

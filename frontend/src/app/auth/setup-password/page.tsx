@@ -3,6 +3,7 @@
 import { Suspense, useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Eye, EyeOff, CheckCircle2, XCircle, Loader2, ArrowRight, ScrollText, X } from 'lucide-react'
+import { TERMS as COMPLETE_TERMS } from '@/components/auth/terms'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
@@ -151,7 +152,7 @@ function SetupPasswordContent() {
               Password Set Successfully!
             </h1>
             <p style={{ color: '#6b7280', margin: '0 0 0.75rem', lineHeight: 1.6, fontSize: '0.875rem' }}>
-              Your password has been set and your <strong>7-day beta access period</strong> has started.
+              Your password has been set. You can now sign in to ARIA.
             </p>
             <p style={{ color: '#9ca3af', fontSize: '0.8125rem', margin: '0 0 1.5rem' }}>
               Redirecting to login page...
@@ -206,7 +207,7 @@ function SetupPasswordContent() {
             Set Your Password
           </p>
           <p style={{ fontSize: '0.8125rem', color: '#6b7280', margin: 0 }}>
-            Welcome to the ARIA Beta Programme
+            Welcome to ARIA
           </p>
         </div>
         
@@ -338,15 +339,14 @@ function SetupPasswordContent() {
               style={{ marginTop: '0.125rem', width: 15, height: 15, accentColor: '#667eea', flexShrink: 0, cursor: 'pointer' }}
             />
             <span style={{ fontSize: '0.75rem', color: '#6b7280', lineHeight: 1.4 }}>
-              I have read the participant and data notice, voluntarily agree to take part in this beta research, and accept the{' '}
+              I agree to the{' '}
               <button
                 type="button"
-                onClick={() => setShowTerms(true)}
+                onClick={e => { e.preventDefault(); e.stopPropagation(); setShowTerms(true) }}
                 style={{ background: 'none', border: 'none', padding: 0, color: '#667eea', fontWeight: 600, cursor: 'pointer', fontSize: 'inherit', textDecoration: 'underline', textUnderlineOffset: '2px' }}
               >
-                Terms &amp; Conditions
+                Terms &amp; Conditions.
               </button>
-              {' '}and understand that I can stop participating at any time
             </span>
           </label>
           
@@ -395,9 +395,6 @@ function SetupPasswordContent() {
           </button>
         </form>
         
-        <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', fontSize: '0.75rem', color: '#92400e', lineHeight: 1.5 }}>
-          <strong>Beta Access:</strong> Your 7-day trial period begins when you set your password.
-        </div>
       </div>
       
       {/* Terms modal */}
@@ -415,58 +412,6 @@ export default function SetupPasswordPage() {
 }
 
 
-// Terms & Conditions Modal (copied from AuthModal)
-const TERMS: { title: string; body: string }[] = [
-  {
-    title: '1. What ARIA is and what participation involves',
-    body:  'ARIA (Agentic Retail Intelligence & Analytics) is a beta research prototype that uses AI-generated synthetic customers to explore business scenarios. It is intended for exploratory and academic research and has not been validated as a commercial decision-making product. If you choose to participate, you may create an account, enter business information, use the chat and simulation features, and provide feedback. Taking part is voluntary. You may decline or stop at any time without penalty; stopping will not affect your access to any service you are otherwise entitled to use.',
-  },
-  {
-    title: '2. Information collected and why',
-    body:  'ARIA stores your account email and the information you submit, which may include your business name, business type, location or district, price and revenue or turnover information, business practices, questions and chat history, feedback, and simulation inputs and results. These details may identify you or your business. Do not submit passwords, payment-card details, customer or employee personal information, or other sensitive information. The project team uses submitted information to provide ARIA, operate and troubleshoot the prototype, and—with your consent—to evaluate and improve it. Research findings will be reported in aggregate or de-identified form. Your name, email, business name, or other identifying details will not be published without your separate permission.',
-  },
-  {
-    title: '3. Storage and AI service providers',
-    body:  'Account and application records are stored in the project’s Supabase database. To generate analyses and responses, the information included in a prompt may be processed by the configured AI provider. Ilmu AI is a cloud provider when enabled; Ollama may be used as a fallback, depending on the deployment configuration. This means some submitted business information may leave the ARIA application and be processed by a service provider. The project team does not sell your information. Access to the database and provider processing are subject to those providers’ systems and terms. Do not enter information you are not comfortable sharing for this purpose.',
-  },
-  {
-    title: '4. Withdrawal and requests about your information',
-    body:  'You may stop participating at any time by stopping use of ARIA. To withdraw or request access, correction, or deletion of information associated with your account, email aria.fypsupport@gmail.com and include the account email you used. Information you enter into ARIA and project records saved in its database will be retained through the project period, ending 31 December 2026. After project close, the project team will permanently delete the research records it controls from the active database and project-held files. Service-provider backups or logs may remain subject to those providers’ retention policies. A simulation deleted in ARIA before then is hidden from normal history but may remain in the database until project close.',
-  },
-  {
-    title: '5. No deception or covert observation',
-    body:  'ARIA does not use deception or covert observation as part of this beta research. You will be told when you are interacting with the ARIA prototype. Simulated customers and their responses are AI-generated; they are not real customers being observed. The project team will not secretly observe you or collect information outside your use of the application and the information described in this notice.',
-  },
-  {
-    title: '6. AI-generated results and business decisions',
-    body:  'Simulation outputs—including visit rates, churn rates, revenue estimates, risk levels, and recommendations—are generated by AI models using synthetic customer data. They are exploratory, may be inaccurate, and are not professional business, financial, legal, or marketing advice. ARIA does not guarantee that results will match real-world outcomes. Do not make significant financial or operational decisions based solely on ARIA’s outputs.',
-  },
-  {
-    title: '7. Research contact',
-    body:  'For questions about the research, your participation, or this notice, contact the project team at aria.fypsupport@gmail.com.',
-  },
-  {
-    title: '8. Beta feedback',
-    body:  'Please provide honest feedback about your experience. The team may use your feedback to evaluate and improve ARIA. Research findings will be reported in aggregate or de-identified form. The team will not publish your name, email, business name, or other identifying details without your separate permission.',
-  },
-  {
-    title: '9. Your responsibility',
-    body:  'You remain responsible for any business decisions you make. Consider ARIA’s output as one exploratory input alongside other information and professional judgment. Do not rely on ARIA alone for significant financial or operational decisions.',
-  },
-  {
-    title: '10. Limitation of liability',
-    body:  'To the extent permitted by applicable law, the ARIA development team, supervisors, affiliated institutions, and contributors are not responsible for business loss, financial loss, reputational damage, or other adverse outcomes resulting from reliance on ARIA’s outputs. This does not limit any rights or obligations that cannot lawfully be excluded. You use ARIA’s outputs at your own discretion and risk.',
-  },
-  {
-    title: '11. Beta access duration',
-    body:  'Beta access lasts 7 days from the date you set your password. Access is automatically revoked when that period ends. The ARIA team may grant an extension.',
-  },
-  {
-    title: '12. Changes to these terms',
-    body:  'These terms may change as ARIA develops. The team will notify participants about material changes to research participation or data use and request renewed consent where appropriate. Continued use alone will not be treated as consent to a material change in research participation or data use.',
-  },
-]
-
 function TermsModal({ onClose, onAccept }: { onClose: () => void; onAccept: () => void }) {
   return (
     <div
@@ -482,9 +427,9 @@ function TermsModal({ onClose, onAccept }: { onClose: () => void; onAccept: () =
       <div
         style={{
           position: 'relative',
-          width: '100%', maxWidth: '560px',
+          width: '100%', maxWidth: '640px',
           background: '#fff',
-          borderRadius: '12px',
+          borderRadius: '16px',
           boxShadow: '0 24px 64px rgba(0,0,0,0.3)',
           display: 'flex', flexDirection: 'column',
           maxHeight: '90vh',
@@ -499,13 +444,13 @@ function TermsModal({ onClose, onAccept }: { onClose: () => void; onAccept: () =
           flexShrink: 0,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
-            <ScrollText style={{ width: 20, height: 20, color: '#000000', flexShrink: 0 }} />
+              <ScrollText style={{ width: 20, height: 20, color: '#667eea', flexShrink: 0 }} />
             <div>
               <h2 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: '#1f2937' }}>
-                Beta Terms, Data Notice &amp; Consent
+                  Terms &amp; Conditions
               </h2>
               <p style={{ margin: 0, fontSize: '0.75rem', color: '#9ca3af' }}>
-                ARIA Beta Programme — please read before continuing
+                  Please read before continuing
               </p>
             </div>
           </div>
@@ -532,14 +477,14 @@ function TermsModal({ onClose, onAccept }: { onClose: () => void; onAccept: () =
         }}>
           {/* Disclaimer banner */}
           <div style={{
-            background: '#fffbeb', border: '1px solid #fde68a',
-            borderRadius: 8, padding: '0.875rem 1rem',
-            fontSize: '0.8125rem', color: '#92400e', lineHeight: 1.6,
+            background: '#eff6ff', border: '1px solid #bfdbfe',
+            borderRadius: 10, padding: '0.875rem 1rem',
+            fontSize: '0.8125rem', color: '#1e3a8a', lineHeight: 1.6,
           }}>
-            <strong>Important:</strong> ARIA is a simulation tool for exploratory purposes only. Results are AI-generated estimates based on synthetic data — they are not professional business advice and do not guarantee real-world outcomes.
+            <strong>About ARIA results:</strong> Results are indicative, not predictive. Simulations use synthetic customers, are not forecasts, and should not be the sole basis for business decisions.
           </div>
 
-          {TERMS.map(section => (
+          {COMPLETE_TERMS.map(section => (
             <div key={section.title}>
               <h3 style={{
                 margin: '0 0 0.375rem',

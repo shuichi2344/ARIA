@@ -2,7 +2,6 @@ export interface AriaSession {
   id: string
   email: string
   created_at: string
-  beta_access_expires_at?: string
 }
 
 export interface BusinessProfile {

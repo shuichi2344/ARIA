@@ -142,7 +142,6 @@ export default function LandingPage() {
     access_token: string
     refresh_token?: string
     email_confirmed?: boolean
-    beta_access_expires_at?: string
   }) {
     console.log('[Auth] routeAfterAuth called for user:', user.email)
     setAuthError(null)

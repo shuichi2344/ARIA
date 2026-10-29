@@ -158,7 +158,6 @@ class SupabaseClient:
                     "id":            user.get("id", ""),
                     "email":         user.get("email", email),
                     "created_at":    user.get("created_at", datetime.now(timezone.utc).isoformat()),
-                    "beta_access_expires_at": (user.get("app_metadata") or {}).get("beta_access_expires_at"),
                     "access_token":  body.get("access_token"),
                     "refresh_token": body.get("refresh_token"),
                 }
@@ -269,43 +268,6 @@ class SupabaseClient:
             if "invalid" in msg or "expired" in msg or "jwt" in msg:
                 raise Exception("INVALID_CREDENTIALS")
             raise
-
-    async def check_beta_access(self, user_id: str) -> bool:
-        """
-        Check if a user's beta access is still valid.
-        
-        Args:
-            user_id: The user's UUID
-            
-        Returns:
-            True if access is valid, False if expired or not set
-        """
-        url = f"{self.base_url}/rest/v1/rpc/is_beta_access_valid"
-        payload = {"user_id": user_id}
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=self.headers) as resp:
-                if resp.status == 200:
-                    result = await resp.json()
-                    return result if isinstance(result, bool) else False
-                return False
-
-    async def set_beta_access_expiration(self, user_id: str, days: int = 7) -> None:
-        """
-        Set beta access expiration for a user.
-        
-        Args:
-            user_id: The user's UUID
-            days: Number of days from now until access expires (default 7)
-        """
-        url = f"{self.base_url}/rest/v1/rpc/set_beta_access_expiration"
-        payload = {"user_id": user_id, "days_from_now": days}
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=self.headers) as resp:
-                if resp.status not in [200, 204]:
-                    error_text = await resp.text()
-                    raise Exception(f"Failed to set beta access: {error_text}")
 
     # -------------------------------------------------------------------------
     # Business profile methods

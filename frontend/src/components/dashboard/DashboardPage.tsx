@@ -29,27 +29,7 @@ export default function DashboardPage({ session }: Props) {
   const router = useRouter()
   const { logout } = useSession()
   const [profile, setProfile] = useState<BusinessProfile | null>(null)
-  const [expiryWarningDismissed, setExpiryWarningDismissed] = useState(false)
   const { startTutorial, resetTutorial, advanceToSimulationStep } = useTutorial()
-
-  const betaExpiryDate = session.beta_access_expires_at
-    ? new Date(session.beta_access_expires_at)
-    : null
-  const betaTimeRemaining = betaExpiryDate && !Number.isNaN(betaExpiryDate.getTime())
-    ? betaExpiryDate.getTime() - Date.now()
-    : null
-  const betaDaysRemaining = betaTimeRemaining !== null
-    ? Math.ceil(betaTimeRemaining / (24 * 60 * 60 * 1000))
-    : null
-  const expiryDismissalKey = `aria_beta_expiry_warning:${session.id}:${session.beta_access_expires_at || ''}`
-  const showExpiryWarning = betaTimeRemaining !== null
-    && betaTimeRemaining > 0
-    && betaTimeRemaining <= 3 * 24 * 60 * 60 * 1000
-    && !expiryWarningDismissed
-
-  useEffect(() => {
-    setExpiryWarningDismissed(localStorage.getItem(expiryDismissalKey) === 'dismissed')
-  }, [expiryDismissalKey])
 
   // Apply saved theme
   useEffect(() => {
@@ -379,60 +359,6 @@ export default function DashboardPage({ session }: Props) {
         </div>
       </header>
 
-      {showExpiryWarning && betaExpiryDate && betaDaysRemaining !== null && (
-        <aside
-          role="status"
-          aria-label="Beta access expiry notice"
-          style={{
-            position: 'fixed', top: 68, right: 16, zIndex: 120,
-            width: 'min(350px, calc(100vw - 32px))',
-            display: 'flex', alignItems: 'flex-start', gap: '0.7rem',
-            padding: '0.8rem 0.85rem',
-            color: '#854d0e', background: '#fffbeb',
-            border: '1px solid #fcd34d', borderRadius: 10,
-            boxShadow: '0 8px 24px rgba(15, 23, 42, 0.12)',
-            fontSize: '0.82rem', lineHeight: 1.45,
-          }}
-        >
-          <span
-            aria-hidden="true"
-            style={{
-              width: 0, height: 0, flex: '0 0 auto', marginTop: 2,
-              borderLeft: '9px solid transparent',
-              borderRight: '9px solid transparent',
-              borderBottom: '16px solid #f59e0b',
-              position: 'relative',
-            }}
-          >
-            <span style={{
-              position: 'absolute', left: -1, top: 4,
-              color: '#fffbeb', fontSize: 9, fontWeight: 700, lineHeight: 1,
-            }}>!</span>
-          </span>
-          <span style={{ flex: 1 }}>
-            <strong style={{ display: 'block', marginBottom: '0.15rem' }}>
-              Beta access expires {betaDaysRemaining === 1 ? 'within 24 hours' : `in ${betaDaysRemaining} days`}
-            </strong>
-            Your access ends on {betaExpiryDate.toLocaleString()}.
-          </span>
-          <button
-            type="button"
-            aria-label="Dismiss beta access expiry notice"
-            title="Dismiss"
-            onClick={() => {
-              localStorage.setItem(expiryDismissalKey, 'dismissed')
-              setExpiryWarningDismissed(true)
-            }}
-            style={{
-              flex: '0 0 auto', border: 0, padding: 2, margin: -2,
-              background: 'transparent', color: '#854d0e', cursor: 'pointer',
-              fontSize: '1.1rem', lineHeight: 1,
-            }}
-          >
-            ×
-          </button>
-        </aside>
-      )}
 
       {/* ── Split layout ── matches .dash-layout */}
       <div style={{

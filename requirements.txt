@@ -1,5 +1,6 @@
 # Core dependencies
 fastapi==0.115.0
+starlette==0.38.6
 uvicorn[standard]==0.32.0
 supabase==2.10.0
 sqlalchemy==2.0.25

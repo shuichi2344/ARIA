@@ -48,24 +48,6 @@ logging.getLogger('aria.external.dosm').setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def _iso_timestamp(value: Any) -> Optional[str]:
-    """Return an Auth metadata timestamp as a timezone-aware ISO string."""
-    if isinstance(value, datetime):
-        parsed = value
-    elif isinstance(value, str) and value.strip():
-        try:
-            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-        except ValueError:
-            logger.warning("Ignoring malformed beta access expiry timestamp")
-            return None
-    else:
-        return None
-
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc).isoformat()
-
-
 def _report_decision(agent: Any) -> str:
     """Return one of the report's three outcomes for every simulated customer."""
     decision = getattr(agent, "last_decision", None)
@@ -182,7 +164,6 @@ class UserResponse(BaseModel):
     id: str
     email: str
     created_at: datetime
-    beta_access_expires_at: Optional[str] = None
     access_token: Optional[str] = None
     refresh_token: Optional[str] = None
     email_confirmed: Optional[bool] = None
@@ -389,12 +370,34 @@ async def get_holidays(state: str = "pulau-pinang", year: Optional[int] = None):
 
 @app.post("/api/auth/register")
 @limiter.limit(AUTH_RATE_LIMIT)
-async def register(request: Request):
-    """Public registration is disabled; new users must use an invitation link."""
-    raise HTTPException(
-        status_code=403,
-        detail="INVITATION_ONLY: Please use an invitation link to create an account.",
-    )
+async def register(request: Request, body: UserRegister):
+    """Create an account through Supabase Auth."""
+    is_valid, error_msg = validate_password_strength(body.password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
+
+    settings = get_settings()
+    redirect_to = f"{str(settings.app_url).rstrip('/')}/auth/finish?type=signup"
+    try:
+        supabase_client = SupabaseClient()
+        user = await supabase_client.register_user(
+            body.email,
+            body.password,
+            redirect_to=redirect_to,
+        )
+        return UserResponse(
+            id=user["id"],
+            email=user["email"],
+            created_at=datetime.fromisoformat(user["created_at"].replace("Z", "+00:00")),
+            access_token=user.get("access_token"),
+            refresh_token=user.get("refresh_token"),
+            email_confirmed=user.get("email_confirmed"),
+        )
+    except Exception as e:
+        if "EMAIL_TAKEN" in str(e):
+            raise HTTPException(status_code=409, detail="An account with this email already exists.")
+        logger.exception("Registration failed")
+        raise HTTPException(status_code=500, detail="Registration failed. Please try again.")
 
 
 @app.post("/api/auth/login", response_model=UserResponse)
@@ -405,18 +408,10 @@ async def login(request: Request, body: UserLogin):
         supabase_client = SupabaseClient()
         user = await supabase_client.login_user(body.email, body.password)
         
-        # Check beta access expiration
-        is_valid = await supabase_client.check_beta_access(user["id"])
-        if not is_valid:
-            raise HTTPException(
-                status_code=403, 
-                detail="BETA_ACCESS_EXPIRED"
-            )
         return UserResponse(
             id=user["id"],
             email=user["email"],
             created_at=datetime.fromisoformat(user["created_at"].replace("Z", "+00:00")),
-            beta_access_expires_at=_iso_timestamp(user.get("beta_access_expires_at")),
             access_token=user.get("access_token"),
             refresh_token=user.get("refresh_token"),
             email_confirmed=user.get("email_confirmed"),
@@ -525,14 +520,13 @@ class SetupPasswordRequest(BaseModel):
 @limiter.limit(AUTH_RATE_LIMIT)
 async def setup_password(request: Request, body: SetupPasswordRequest):
     """
-    Set password for invited user and initialize beta access period.
+    Set a password for a user completing an invitation-based account setup.
     This is called after a user clicks the Supabase invitation link.
     
     Flow:
     1. Validate password strength
     2. Update password using Supabase JWT
-    3. Set beta access expiration (7 days from now)
-    4. Record T&C acceptance
+    3. Record T&C acceptance
     """
     # Validate password strength
     is_valid, error_msg = validate_password_strength(body.new_password)
@@ -551,13 +545,9 @@ async def setup_password(request: Request, body: SetupPasswordRequest):
 
         await supabase_client.update_user_password(body.access_token, body.new_password)
         
-        # Set beta access expiration (7 days from now)
-        await supabase_client.set_beta_access_expiration(user_id, days=7)
-
         return {
             "success": True,
-            "message": "Password set successfully. Your 7-day beta access period has started.",
-            "expires_in_days": 7
+            "message": "Password set successfully.",
         }
     except HTTPException:
         raise
@@ -583,9 +573,6 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         id=current_user["sub"],
         email=current_user.get("email", ""),
         created_at=created_at,
-        beta_access_expires_at=_iso_timestamp(
-            (current_user.get("app_metadata") or {}).get("beta_access_expires_at")
-        ),
     )
 
 

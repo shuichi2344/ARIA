@@ -129,8 +129,7 @@ _http_bearer = HTTPBearer(auto_error=False)
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer)) -> dict:
     """
-    FastAPI dependency — validates Supabase JWT from Authorization header
-    and checks beta access expiration.
+    FastAPI dependency — validates Supabase JWT from Authorization header.
 
     Usage:
         @app.get("/api/protected")
@@ -164,17 +163,6 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials | None = De
         "user_metadata": user.get("user_metadata") or {},
         "app_metadata": user.get("app_metadata") or {},
     }
-
-    # Check beta access expiration
-    user_id = payload.get("sub")
-    if user_id:
-        is_valid = await supabase_client.check_beta_access(user_id)
-        if not is_valid:
-            logger.warning(f"Beta access expired for user {user_id}")
-            raise HTTPException(
-                status_code=403,
-                detail="BETA_ACCESS_EXPIRED"
-            )
 
     return payload
 

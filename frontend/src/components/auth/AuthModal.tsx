@@ -1,8 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { X, ArrowRight, Loader2, Eye, EyeOff } from 'lucide-react'
-import { useSession } from '@/context/SessionContext'
+import { X, ArrowRight, Loader2, Eye, EyeOff, ScrollText } from 'lucide-react'
+import { TERMS } from './terms'
 
 interface Props {
   defaultTab?: 'login' | 'register'
@@ -14,7 +14,6 @@ interface Props {
     access_token: string
     refresh_token?: string
     email_confirmed?: boolean
-    beta_access_expires_at?: string
   }) => void
 }
 
@@ -98,13 +97,20 @@ function PasswordInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
 }
 
 export default function AuthModal({ defaultTab = 'login', onClose, onSuccess }: Props) {
-  const { logout } = useSession()
   const [tab, setTab] = useState<'login' | 'register' | 'forgot'>(defaultTab)
 
   const [loginEmail, setLoginEmail]       = useState('')
   const [loginPassword, setLoginPassword] = useState('')
   const [loginError, setLoginError]       = useState('')
   const [loginLoading, setLoginLoading]   = useState(false)
+
+  const [regEmail, setRegEmail] = useState('')
+  const [regPassword, setRegPassword] = useState('')
+  const [regConfirm, setRegConfirm] = useState('')
+  const [regError, setRegError] = useState('')
+  const [regLoading, setRegLoading] = useState(false)
+  const [regTerms, setRegTerms] = useState(false)
+  const [showTerms, setShowTerms] = useState(false)
 
   const [forgotEmail, setForgotEmail]     = useState('')
   const [forgotError, setForgotError]     = useState('')
@@ -127,12 +133,6 @@ export default function AuthModal({ defaultTab = 'login', onClose, onSuccess }: 
           setLoginError('Please confirm your email address before signing in. Check your inbox for a confirmation link.')
           return
         }
-        if (data.detail === 'BETA_ACCESS_EXPIRED') {
-          logout()
-          onClose()
-          window.location.replace('/auth/error?reason=beta_expired')
-          return
-        }
         setLoginError(data.detail || 'Login failed.')
         return
       }
@@ -145,6 +145,34 @@ export default function AuthModal({ defaultTab = 'login', onClose, onSuccess }: 
       setLoginError('Could not reach the server. Make sure the API is running.')
     } finally {
       setLoginLoading(false)
+    }
+  }
+
+  async function handleRegister(e: React.FormEvent) {
+    e.preventDefault()
+    setRegError('')
+    if (regPassword !== regConfirm) { setRegError('Passwords do not match.'); return }
+    const pwError = validatePassword(regPassword)
+    if (pwError) { setRegError(pwError); return }
+    if (!regTerms) { setRegError('You must agree to the Terms & Conditions to create an account.'); return }
+    setRegLoading(true)
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: regEmail.trim(), password: regPassword }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setRegError(data.detail || 'Registration failed.'); return }
+      if (data.email_confirmed === false || !data.access_token) {
+        setRegError('Account created! Please check your email to confirm your address before logging in.')
+        return
+      }
+      onSuccess(data)
+    } catch {
+      setRegError('Could not reach the server. Make sure the API is running.')
+    } finally {
+      setRegLoading(false)
     }
   }
 
@@ -332,34 +360,79 @@ export default function AuthModal({ defaultTab = 'login', onClose, onSuccess }: 
 
         {/* Register form */}
         {tab === 'register' && (
-          <div style={{
-            background: '#fffbeb',
-            border: '1px solid #fde68a',
-            borderRadius: '8px',
-            padding: '1rem 1.125rem',
-            fontSize: '0.875rem',
-            color: '#92400e',
-            lineHeight: 1.6,
-          }}>
-            <strong>Invitation only.</strong> ARIA is currently not accepting new sign ups.
-            If you received an invitation link and have set up your password, please{' '}
-            <button
-              type="button"
-              onClick={() => setTab('login')}
-              style={{
-                background: 'none', border: 'none', padding: 0,
-                color: '#b45309', fontWeight: 700,
-                cursor: 'pointer', fontSize: 'inherit',
-                textDecoration: 'underline', textUnderlineOffset: '2px',
-              }}
-            >
-              Sign In
-            </button>
-            .
-          </div>
+          <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <FormField label="Email">
+              <AuthInput type="email" value={regEmail} onChange={e => setRegEmail(e.target.value)} placeholder="you@example.com" required autoComplete="email" />
+            </FormField>
+            <FormField label="Password">
+              <PasswordInput value={regPassword} onChange={e => setRegPassword(e.target.value)} placeholder="Min 6 chars, uppercase, number, special" required minLength={6} autoComplete="new-password" />
+              <span style={{ fontSize: '0.72rem', color: 'var(--gray-500)', marginTop: '-0.25rem' }}>
+                Must include uppercase, number, and special character
+              </span>
+            </FormField>
+            <FormField label="Confirm Password">
+              <PasswordInput value={regConfirm} onChange={e => setRegConfirm(e.target.value)} placeholder="Repeat your password" required autoComplete="new-password" />
+            </FormField>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.625rem', cursor: 'pointer', userSelect: 'none' }}>
+              <input type="checkbox" checked={regTerms} onChange={e => setRegTerms(e.target.checked)} style={{ marginTop: '0.15rem', width: 16, height: 16, accentColor: 'var(--accent)', flexShrink: 0, cursor: 'pointer' }} />
+              <span style={{ fontSize: '0.8125rem', color: 'var(--gray-600)', lineHeight: 1.5 }}>
+                I agree to the{' '}
+                <button type="button" onClick={e => { e.preventDefault(); e.stopPropagation(); setShowTerms(true) }} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--accent)', fontWeight: 600, cursor: 'pointer', fontSize: 'inherit', textDecoration: 'underline', textUnderlineOffset: '2px' }}>
+                  Terms &amp; Conditions.
+                </button>
+              </span>
+            </label>
+            {regError && <AuthError>{regError}</AuthError>}
+            <SubmitBtn loading={regLoading}>Create Account</SubmitBtn>
+          </form>
         )}
 
         {/* T&C modal */}
+        {showTerms && <TermsModal onClose={() => setShowTerms(false)} onAccept={() => { setRegTerms(true); setShowTerms(false) }} />}
+      </div>
+    </div>
+  )
+}
+
+function validatePassword(password: string): string | null {
+  if (password.length < 6) return 'Password must be at least 6 characters.'
+  if (!/[A-Z]/.test(password)) return 'Password must include at least one uppercase letter.'
+  if (!/[0-9]/.test(password)) return 'Password must include at least one number.'
+  if (!/[^A-Za-z0-9]/.test(password)) return 'Password must include at least one special character.'
+  return null
+}
+
+function TermsModal({ onClose, onAccept }: { onClose: () => void; onAccept: () => void }) {
+  return (
+    <div onClick={e => { if (e.target === e.currentTarget) onClose() }} style={{ position: 'fixed', inset: 0, zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', background: 'rgba(15, 23, 42, 0.62)', backdropFilter: 'blur(5px)' }}>
+      <div role="dialog" aria-modal="true" aria-labelledby="terms-title" style={{ width: '100%', maxWidth: 640, maxHeight: '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#fff', borderRadius: 16, boxShadow: '0 24px 72px rgba(15, 23, 42, 0.3)', color: 'var(--gray-700)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', padding: '1.15rem 1.5rem', borderBottom: '1px solid #e5e7eb' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <span style={{ display: 'grid', placeItems: 'center', width: 38, height: 38, borderRadius: 10, background: '#eff6ff', color: 'var(--accent)', flexShrink: 0 }}><ScrollText style={{ width: 20, height: 20 }} /></span>
+            <div>
+              <h2 id="terms-title" style={{ margin: 0, color: 'var(--gray-900)', fontSize: '1.15rem', fontWeight: 750 }}>Terms &amp; Conditions</h2>
+              <p style={{ margin: '0.2rem 0 0', color: 'var(--gray-500)', fontSize: '0.78rem' }}>ARIA account, research, and data information</p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close terms" style={{ display: 'grid', placeItems: 'center', width: 36, height: 36, border: 0, borderRadius: 8, background: 'transparent', color: 'var(--gray-500)', cursor: 'pointer' }}>
+            <X style={{ width: 20, height: 20 }} />
+          </button>
+        </div>
+        <div style={{ overflowY: 'auto', padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{ padding: '0.9rem 1rem', border: '1px solid #bfdbfe', borderRadius: 10, background: '#eff6ff', color: '#1e3a8a', lineHeight: 1.55, fontSize: '0.84rem' }}>
+            <strong>About ARIA results:</strong> Simulations are indicative, not predictive. They use synthetic customers, are not forecasts, and should not be the sole basis for business decisions.
+          </div>
+          {TERMS.map(section => (
+            <section key={section.title} style={{ paddingBottom: '0.85rem', borderBottom: '1px solid #eef2f7' }}>
+              <h3 style={{ fontSize: '0.92rem', margin: '0 0 0.4rem', color: 'var(--gray-900)', lineHeight: 1.35 }}>{section.title}</h3>
+              <p style={{ fontSize: '0.84rem', lineHeight: 1.65, margin: 0, color: 'var(--gray-600)' }}>{section.body}</p>
+            </section>
+          ))}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', padding: '1rem 1.5rem', borderTop: '1px solid #e5e7eb', background: '#f8fafc' }}>
+          <button type="button" onClick={onClose} style={{ padding: '0.7rem 1.1rem', borderRadius: 8, border: '1px solid #cbd5e1', background: '#fff', color: '#334155', fontWeight: 600, cursor: 'pointer' }}>Close</button>
+          <button type="button" onClick={onAccept} style={{ padding: '0.7rem 1.15rem', borderRadius: 8, border: 'none', background: 'var(--primary)', color: '#fff', fontWeight: 650, cursor: 'pointer' }}>I Agree</button>
+        </div>
       </div>
     </div>
   )

@@ -1,14 +1,10 @@
 'use client'
 
 import { Suspense, useEffect, useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { Mail, MessageSquareText } from 'lucide-react'
-
-const BETA_FEEDBACK_URL = process.env.NEXT_PUBLIC_BETA_FEEDBACK_URL?.trim()
-  || 'https://forms.gle/AmLRSQcmm5vBTouK8'
+import { useSearchParams } from 'next/navigation'
+import { Mail } from 'lucide-react'
 
 function AuthErrorContent() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const [error, setError] = useState<string>('')
   const [errorCode, setErrorCode] = useState<string>('')
@@ -23,17 +19,13 @@ function AuthErrorContent() {
     const errorParam = searchParams.get('error') || ''
     const errorCodeParam = searchParams.get('error_code') || ''
     const errorDescParam = searchParams.get('error_description') || ''
-    const reasonParam = searchParams.get('reason') || ''
 
     setError(errorParam)
     setErrorCode(errorCodeParam)
     setErrorDescription(errorDescParam)
 
-    console.log('[AuthError] Error params:', { errorParam, errorCodeParam, errorDescParam, reasonParam })
+    console.log('[AuthError] Error params:', { errorParam, errorCodeParam, errorDescParam })
   }, [searchParams])
-
-  // Check if this is beta access expiry
-  const isBetaExpired = searchParams.get('reason') === 'beta_expired'
 
   // Check if this is an expired OTP/invitation error
   const isExpiredInvite = 
@@ -43,13 +35,6 @@ function AuthErrorContent() {
     errorDescription.toLowerCase().includes('invalid')
 
   const getErrorMessage = () => {
-    if (isBetaExpired) {
-      return {
-        title: 'Beta Access Expired',
-        description: 'Your beta testing period has ended. Thank you for participating in the ARIA beta programme.',
-      }
-    }
-
     if (isExpiredInvite) {
       return {
         title: 'Invitation Link Expired',
@@ -74,12 +59,6 @@ function AuthErrorContent() {
   const errorInfo = getErrorMessage()
 
   const handleContactSupport = () => {
-    const isBetaExpired = searchParams.get('reason') === 'beta_expired'
-    if (isBetaExpired) {
-      if (BETA_FEEDBACK_URL) window.location.assign(BETA_FEEDBACK_URL)
-      return
-    }
-
     const body = 'Hello%2C%0A%0AI%20received%20an%20expired%20invitation%20link%20and%20would%20like%20to%20request%20a%20new%20one.%0A%0AThank%20you.'
     
     window.location.href = `mailto:aria.fypsupport@gmail.com?subject=New%20Invitation%20Request&body=${body}`
@@ -153,7 +132,7 @@ function AuthErrorContent() {
           </div>
 
           {/* Show invite-specific message */}
-          {(isExpiredInvite || isBetaExpired) && (
+          {isExpiredInvite && (
             <div style={{
               background: '#fffbeb',
               border: '1px solid #fde68a',
@@ -168,9 +147,7 @@ function AuthErrorContent() {
                 alignItems: 'flex-start',
                 gap: '0.625rem',
               }}>
-                {isBetaExpired
-                  ? <MessageSquareText style={{ width: 20, height: 20, color: '#92400e', flexShrink: 0, marginTop: '2px' }} />
-                  : <Mail style={{ width: 20, height: 20, color: '#92400e', flexShrink: 0, marginTop: '2px' }} />}
+                <Mail style={{ width: 20, height: 20, color: '#92400e', flexShrink: 0, marginTop: '2px' }} />
                 <div style={{ flex: 1 }}>
                   <p style={{
                     fontSize: '0.875rem',
@@ -178,11 +155,9 @@ function AuthErrorContent() {
                     lineHeight: 1.5,
                     margin: 0,
                   }}>
-                    {isBetaExpired
-                      ? 'We’d appreciate your feedback about the ARIA beta programme.'
-                      : 'To request a new invitation link, please send an email to:'}
+                    To request a new invitation link, please send an email to:
                   </p>
-                  {!isBetaExpired && <a
+                  <a
                       href="mailto:aria.fypsupport@gmail.com"
                       style={{
                         fontSize: '0.9375rem',
@@ -195,26 +170,24 @@ function AuthErrorContent() {
                       }}
                     >
                       aria.fypsupport@gmail.com
-                    </a>}
+                    </a>
                 </div>
               </div>
             </div>
           )}
 
           {/* Action button */}
-          {(isExpiredInvite || isBetaExpired) && (
+          {isExpiredInvite && (
             <div style={{ marginTop: '0.5rem' }}>
               <button
                 onClick={handleContactSupport}
-                disabled={isBetaExpired && !BETA_FEEDBACK_URL}
-                title={isBetaExpired && !BETA_FEEDBACK_URL ? 'Feedback form link will be added soon.' : undefined}
                 style={{
                   width: '100%',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   gap: '0.5rem',
-                  background: isBetaExpired && !BETA_FEEDBACK_URL ? '#6b7280' : '#000000',
+                  background: '#000000',
                   color: '#fff',
                   fontFamily: 'var(--font-family)',
                   fontSize: '1rem',
@@ -222,46 +195,25 @@ function AuthErrorContent() {
                   padding: '1rem',
                   border: 'none',
                   borderRadius: '8px',
-                  cursor: isBetaExpired && !BETA_FEEDBACK_URL ? 'not-allowed' : 'pointer',
+                  cursor: 'pointer',
                   boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
                   transition: 'all 0.3s cubic-bezier(0.16,1,0.3,1)',
                 }}
                 onMouseEnter={e => {
-                  if (isBetaExpired && !BETA_FEEDBACK_URL) return
                   e.currentTarget.style.background = '#1f2937'
                   e.currentTarget.style.transform = 'translateY(-2px)'
                   e.currentTarget.style.boxShadow = '0 6px 20px rgba(0,0,0,0.2)'
                 }}
                 onMouseLeave={e => {
-                  e.currentTarget.style.background = isBetaExpired && !BETA_FEEDBACK_URL ? '#6b7280' : '#000000'
+                  e.currentTarget.style.background = '#000000'
                   e.currentTarget.style.transform = 'translateY(0)'
                   e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.15)'
                 }}
               >
-                {isBetaExpired ? <MessageSquareText style={{ width: 20, height: 20 }} /> : <Mail style={{ width: 20, height: 20 }} />}
-                {isBetaExpired ? 'Send Feedback' : 'Request New Invitation'}
+                <Mail style={{ width: 20, height: 20 }} />
+                Request New Invitation
               </button>
             </div>
-          )}
-
-          {isBetaExpired && (
-            <button
-              type="button"
-              onClick={() => router.replace('/')}
-              style={{
-                alignSelf: 'center',
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--accent)',
-                cursor: 'pointer',
-                font: 'inherit',
-                fontSize: '0.875rem',
-                padding: '0.25rem 0.5rem',
-                textDecoration: 'underline',
-              }}
-            >
-              Return to ARIA home
-            </button>
           )}
 
           {/* Error details (for debugging) */}
